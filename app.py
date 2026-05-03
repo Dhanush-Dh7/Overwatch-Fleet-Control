@@ -432,4 +432,4 @@ if user_text:
         except Exception as e:
             st.session_state.chat_history.append(AIMessage(content=f"HUD Failure: {str(e)}"))
 
-        st.rerun()
+        st.rerun() 
