@@ -18,6 +18,17 @@ Overwatch implements an Agentic AI Fleet Orchestration layer:
 * **Self-Healing Loop:** Autonomous power management ensures units remain in a state of 24/7 operational readiness.
 * **Chaos Resilience:** A priority-based override system that halts routine work to address immediate hazards.
 
+## 📸 Project Gallery
+
+
+### User Interface (Streamlit HUD)
+![HUD Preview](https://github.com/user-attachments/assets/91a5a2d3-614f-4e52-9bbd-e2324a4ae80a)
+
+### System Architecture
+![Logic Flow](https://github.com/user-attachments/assets/e866caa7-2edf-42be-a305-07a31cabfda8)
+
+---
+
 ## 🛠 Tech Stack
 * **AI Core:** Gemini 2.0 Flash (Strategist Node)
 * **Logic & State Management:** Python & LangGraph
@@ -29,12 +40,6 @@ Overwatch implements an Agentic AI Fleet Orchestration layer:
 * **Real-time HUD:** Monitor unit vitals, location maps, and mission progress.
 * **Mission Logging:** Records actions for predictive maintenance and performance analysis.
 * **Safety Authorization:** Integrated request system for high-risk operations.
-
-## 🏢 Real-World Use Cases
-* **Smart Warehousing:** Optimizing AMR paths and battery cycles.
-* **Hazardous Refineries:** Managing specialized units for leak/fire response.
-* **Automated Manufacturing:** Facilitating "Lights-Out" factories.
-* **Search & Rescue:** Coordinating multi-vehicle swarms in disaster zones.
 
 ## 🚀 Setup Instructions
 1. **Clone the repository:**
