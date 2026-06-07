@@ -210,3 +210,7 @@ __marimo__/
 venv/
 *.mp3
 *.wav
+# ROS2 and overwatch
+build/
+install/
+log/
