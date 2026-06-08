@@ -43,7 +43,7 @@ Overwatch implements an Agentic AI Fleet Orchestration layer:
 
 ## 🚀 Setup Instructions
 1. **Clone the repository:**
-   `git clone <your-repo-link>`
+   `git clone <https://github.com/Dhanush-Dh7/Overwatch-Fleet-Control.git>`
 2. **Create a Virtual Env:**
    `python -m venv venv`
 3. **Activate it:**
