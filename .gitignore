@@ -214,3 +214,5 @@ venv/
 build/
 install/
 log/
+#for mac users
+.DS_Store
