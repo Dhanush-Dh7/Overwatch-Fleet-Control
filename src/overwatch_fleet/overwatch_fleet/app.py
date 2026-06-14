@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import csv
 import io
 import time
@@ -14,6 +13,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from dotenv import load_dotenv
 
 load_dotenv()
+
 
 st.set_page_config(page_title="Overwatch: Fleet Control", page_icon="🛡️", layout="wide")
 
@@ -196,7 +196,7 @@ def render_mission_board():
 
     label = "📋 Mission Board" + (" — ⏳ in progress" if has_ongoing else "")
     with st.expander(label, expanded=has_ongoing):
-        components.html(html, height=160, scrolling=False)
+        st.html(html)
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────
@@ -248,11 +248,7 @@ with st.sidebar:
 
 
     with tab_vitals:
-
-         #new imports for updated states
-        from ros2_bridge import sync_robot_states
-        sync_robot_states(fleet_manager)
-
+        
         summary = fleet_manager.get_fleet_summary()
         c1, c2 = st.columns(2)
         c1.metric("Units", f"{summary['operational']}/{summary['total']}")
@@ -269,24 +265,19 @@ with st.sidebar:
             st.bar_chart(counts)
 
         st.divider()
+
         for name, stats in fleet_manager.robots.items():
             charge_tag = " ⚡" if stats['charging'] else ""
             badge = type_badge(stats['type'])
-            
-            #Added here
+
             st.markdown(f"**{health_color(stats['health'])} {name}** {badge} `{stats['type']}`{charge_tag}")
             
-            if stats.get("manual_override", False):
-                st.markdown(":orange[**Manual Control**]")
-            else:
-                st.markdown(":green[**Autonomous**]")
-
-
             st.progress(stats['battery'] / 100, text=f"{battery_icon(stats['battery'])} {stats['battery']}%")
             st.caption(f"📍 {stats['location']} | {stats['status']}")
             if stats.get('mission'):
                 st.caption(f"🎯 {stats['mission'][:45]}")
             st.divider()
+            
 
     with tab_map:
         from simulation import ALL_LOCATIONS

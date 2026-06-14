@@ -16,11 +16,11 @@ class VirtualFleet:
     def __init__(self):
         # 3 Support (general), 2 Disaster Management — no repair bot
         self.robots = {
-            "Indra":  {"location": "Assembly-A",     "battery": 85, "status": "Idle", "health": "Operational", "mission": None, "type": "Support",       "charging": False,"manual_override": False},
-            "Vayu":   {"location": "Storage-Bay",    "battery": 72, "status": "Idle", "health": "Operational", "mission": None, "type": "Support",       "charging": False,"manual_override": False},
-            "Trishul":{"location": "Assembly-B",     "battery": 60, "status": "Idle", "health": "Operational", "mission": None, "type": "Support",       "charging": False,"manual_override": False},
-            "Agni":   {"location": "Loading-Dock",   "battery": 90, "status": "Idle", "health": "Operational", "mission": None, "type": "Disaster Mgmt", "charging": False,"manual_override": False},
-            "Rudra":  {"location": "Processing-Unit","battery": 55, "status": "Idle", "health": "Operational", "mission": None, "type": "Disaster Mgmt", "charging": False,"manual_override": False},
+            "Indra":  {"location": "Assembly-A",     "battery": 85, "status": "Idle", "health": "Operational", "mission": None, "type": "Support",       "charging": False},
+            "Vayu":   {"location": "Storage-Bay",    "battery": 72, "status": "Idle", "health": "Operational", "mission": None, "type": "Support",       "charging": False},
+            "Trishul":{"location": "Assembly-B",     "battery": 60, "status": "Idle", "health": "Operational", "mission": None, "type": "Support",       "charging": False},
+            "Agni":   {"location": "Loading-Dock",   "battery": 90, "status": "Idle", "health": "Operational", "mission": None, "type": "Disaster Mgmt", "charging": False},
+            "Rudra":  {"location": "Processing-Unit","battery": 55, "status": "Idle", "health": "Operational", "mission": None, "type": "Disaster Mgmt", "charging": False},
         }
         self.hazards = []
         self.mission_ledger = []
@@ -79,8 +79,6 @@ class VirtualFleet:
     def simulation_tick(self):
         with self._lock:
             for name, unit in self.robots.items():
-                if unit.get("manual_override", False):
-                    continue
                 if unit["health"] == "Malfunction" or unit["status"] == "Offline":
                     continue
 
@@ -204,7 +202,6 @@ class VirtualFleet:
             return
         unit = self.robots[name]
         prev_task = unit.get("mission", "unknown task")
-        self.robots[name]["manual_override"] = False
         self.robots[name]["mission"] = None
         self.robots[name]["status"] = "Idle"
         

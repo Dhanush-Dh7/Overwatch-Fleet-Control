@@ -63,20 +63,22 @@ class OverwatchBridge(Node):
         self.get_logger().info("Service 'get_robot_details' is ready.")
 
     def command_callback(self, msg):
-        self.get_logger().info(f"Received command: {msg.data}")
         try:
-            # Assuming command format is "Name:Status"
-            robot_name, new_status = msg.data.split(':')
+            # Expecting format "Manual:Indra"
+            if ":" not in msg.data:
+                return
+                
+            action, robot_name = msg.data.split(':')
             
             if robot_name in self.fleet.robots:
-                # This directly changes your simulation's memory!
-                self.fleet.robots[robot_name]['status'] = new_status
-                self.get_logger().info(f"SUCCESS: {robot_name} status updated to {new_status}")
+                # Update the simulation state
+                self.fleet.robots[robot_name]["manual_override"] = (action == "Manual")
+                self.get_logger().info(f"SUCCESS: {robot_name} mode set to {action}")
             else:
-                self.get_logger().warn(f"Robot {robot_name} not found.")
+                self.get_logger().warn(f"Robot '{robot_name}' not recognized.")
         except Exception as e:
-            self.get_logger().error(f"Failed to process command: {e}")
-
+            self.get_logger().error(f"Command Error: {e}")
+        
     def timer_callback(self):
         print("DEBUG: Fleet size is:", len(self.fleet.robots), flush=True)
         print("DEBUG: Fleet keys are:", list(self.fleet.robots.keys()), flush=True)
