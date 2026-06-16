@@ -104,29 +104,133 @@ def strategist_node(state: AgentState) -> AgentState:
         return {**state, "messages": messages + [AIMessage(content="No input received.")]}
 
     last_msg = messages[-1].content
-    last_lower = last_msg.lower()
     fleet_data = fleet_manager.robots
-    target_robot = _resolve_robot(last_lower)
 
-    # ── Info requests: ALWAYS answer directly — never require approval ──────
+    # ── Greeting detection ────────────────────────────────────────────────────
+    _GREETING_SET = {
+        "hi", "hello", "hey", "howdy", "hiya", "yo", "sup", "greetings",
+        "bonjour", "hola", "ciao", "namaste", "salut", "hallo", "ola", "hoi",
+        "good morning", "good afternoon", "good evening", "what's up", "whats up",
+    }
+    _GREETING_REPLIES = {
+        "hi": "Hi, Commander!",
+        "hello": "Hello, Commander!",
+        "hey": "Hey, Commander!",
+        "howdy": "Howdy, Commander!",
+        "hiya": "Hey there, Commander!",
+        "yo": "Yo, Commander!",
+        "sup": "Hey Commander!",
+        "greetings": "Greetings, Commander!",
+        "bonjour": "Bonjour, Commander!",
+        "hola": "Hola, Commander!",
+        "ciao": "Ciao, Commander!",
+        "namaste": "Namaste, Commander!",
+        "salut": "Salut, Commander!",
+        "hallo": "Hallo, Commander!",
+        "ola": "Ola, Commander!",
+        "hoi": "Hoi, Commander!",
+        "good morning": "Good morning, Commander!",
+        "good afternoon": "Good afternoon, Commander!",
+        "good evening": "Good evening, Commander!",
+        "what's up": "Hey Commander!",
+        "whats up": "Hey Commander!",
+    }
+
+    _stripped = last_msg.strip().lower().rstrip("!.,? ")
+    _is_greeting = False
+    _follow_up = ""
+    _matched_greeting = ""
+
+    # Fast path 1: exact match (pure greeting, nothing else)
+    if _stripped in _GREETING_SET:
+        _is_greeting = True
+        _matched_greeting = _stripped
+
+    # Fast path 2: starts with greeting word followed by a command
+    if not _is_greeting:
+        for _gw in sorted(_GREETING_SET, key=len, reverse=True):
+            if (_stripped.startswith(_gw + " ") or
+                    _stripped.startswith(_gw + ",") or
+                    _stripped.startswith(_gw + "!")):
+                _is_greeting = True
+                _matched_greeting = _gw
+                _follow_up = _stripped[len(_gw):].strip().lstrip(",!. ")
+                break
+
+    # LLM fallback: multilingual / unusual greetings not in the set
+    if not _is_greeting:
+        _clf_prompt = (
+            f'Is this a greeting or salutation in any language? Message: "{last_msg}"\n'
+            f'Return ONLY JSON with these exact keys:\n'
+            f'{{"greeting": false, "command": ""}}\n'
+            f'Set greeting to true if the message is or starts with any hello/hi/salutation.\n'
+            f'Set command to the non-greeting part, or empty string if none.'
+        )
+        try:
+            _clf = _extract_json(get_llm().invoke(_clf_prompt).content) or {}
+            _is_greeting = bool(_clf.get("greeting", False))
+            _follow_up = (_clf.get("command") or "").strip()
+            _matched_greeting = ""
+        except Exception:
+            _is_greeting = False
+            _follow_up = ""
+            _matched_greeting = ""
+
+    # Build greeting prefix
+    _greeting_prefix = ""
+    if _is_greeting:
+        _s = fleet_manager.get_fleet_summary()
+        if _matched_greeting:
+            _greeting_reply = _GREETING_REPLIES.get(_matched_greeting, "Hello, Commander!")
+        else:
+            try:
+                _greeting_reply = get_llm().invoke(
+                    f'Reply to this greeting: "{last_msg}"\n'
+                    f'Respond with ONLY a short greeting back (3-6 words) in the SAME language '
+                    f'as the input, addressing the person as "Commander". No extra text.'
+                ).content.strip() or "Hello, Commander!"
+            except Exception:
+                _greeting_reply = "Hello, Commander!"
+        _greeting_prefix = (
+            f"{_greeting_reply} Overwatch HUD online — "
+            f"{_s['operational']}/{_s['total']} units operational, "
+            f"avg battery {_s['avg_battery']}%.\n\n"
+        )
+
+    # Pure greeting — no follow-up
+    if _is_greeting and not _follow_up:
+        return {
+            "messages": messages + [AIMessage(content=_greeting_prefix + "Standing by for orders.")],
+            "reasoning_log": logs + ["Strategist: Greeting acknowledged, no dispatch."],
+            "needs_approval": False,
+            "pending_action": {},
+            "mission_history": history,
+        }
+
+    # Resolve effective message (strip greeting portion if present)
+    _effective_msg = _follow_up if (_is_greeting and _follow_up) else last_msg
+    _effective_lower = _effective_msg.lower()
+    _effective_robot = _resolve_robot(_effective_lower)
+
+    # ── Info requests ─────────────────────────────────────────────────────────
     info_keywords = [
         "status", "battery", "where", "location", "position", "health",
         "report", "vitals", "fleet", "all units", "summary", "patrol",
         "how is", "what is", "tell me about", "check on", "show me",
     ]
-    is_info_request = any(kw in last_lower for kw in info_keywords)
+    is_info_request = any(kw in _effective_lower for kw in info_keywords)
 
     if is_info_request:
-        if target_robot:
-            unit = fleet_data[target_robot]
+        if _effective_robot:
+            unit = fleet_data[_effective_robot]
             batt_bar = "█" * (unit['battery'] // 10) + "░" * (10 - unit['battery'] // 10)
-            if any(w in last_lower for w in ["where", "location", "position"]):
-                res = f"Commander, **{target_robot}** is currently at **{unit['location']}**."
-            elif "battery" in last_lower:
-                res = f"**{target_robot}** battery: **{unit['battery']}%** `{batt_bar}`"
+            if any(w in _effective_lower for w in ["where", "location", "position"]):
+                res = f"Commander, **{_effective_robot}** is currently at **{unit['location']}**."
+            elif "battery" in _effective_lower:
+                res = f"**{_effective_robot}** battery: **{unit['battery']}%** `{batt_bar}`"
             else:
                 res = (
-                    f"**{target_robot}** ({unit['type']}) Status:\n"
+                    f"**{_effective_robot}** ({unit['type']}) Status:\n"
                     f"- Location: {unit['location']}\n"
                     f"- Battery: {unit['battery']}% `{batt_bar}`\n"
                     f"- Status: {unit['status']}\n"
@@ -151,25 +255,25 @@ def strategist_node(state: AgentState) -> AgentState:
                 f"Avg Battery: {summary['avg_battery']}%\n\n"
                 f"{robot_lines}{hazard_line}"
             )
-
         return {
-            "messages": messages + [AIMessage(content=res)],
-            "reasoning_log": logs + [f"Strategist: Direct telemetry for {target_robot or 'fleet'}"],
+            "messages": messages + [AIMessage(content=_greeting_prefix + res)],
+            "reasoning_log": logs + [f"Strategist: Telemetry for {_effective_robot or 'fleet'}"],
             "needs_approval": False,
             "pending_action": {},
             "mission_history": history,
         }
 
-    # ── Mission dispatch — only flag hazard when the message itself requests
-    #    emergency action; do NOT block routine commands just because an old
-    #    hazard is still sitting in the hazard list.
+    # ── Mission dispatch ───────────────────────────────────────────────────────
     is_hazard = any(
-        h in last_lower for h in ["fire", "leak", "emergency", "breach", "critical", "spill", "collapse", "evacuate", "hazard"]
+        h in _effective_lower for h in [
+            "fire", "leak", "emergency", "breach", "critical",
+            "spill", "collapse", "evacuate", "hazard"
+        ]
     )
 
     prompt = f"""You are the Overwatch Strategist AI for a factory. Determine the best robot and action.
 
-COMMANDER'S INTENT: "{last_msg}"
+COMMANDER'S INTENT: "{_effective_msg}"
 
 FLEET STATUS:
 {_build_fleet_context()}
@@ -196,10 +300,10 @@ INSTRUCTIONS:
         if not decision or "robot" not in decision:
             raise ValueError(f"Could not parse JSON: {raw[:200]}")
     except Exception as e:
-        fallback = target_robot or _best_available_robot()
+        fallback = _effective_robot or _best_available_robot()
         decision = {"robot": fallback, "action": "General inspection", "reasoning": str(e)[:80]}
 
-    chosen = decision.get("robot", "Titan")
+    chosen = decision.get("robot", "Indra")
     if chosen in fleet_data and fleet_data[chosen]["battery"] < 25:
         logs = logs + [f"Strategist: Warning — {chosen} battery low ({fleet_data[chosen]['battery']}%). Consider recharging."]
 
@@ -212,8 +316,6 @@ INSTRUCTIONS:
         "pending_action": decision,
         "mission_history": history,
     }
-
-
 # ── Logistics node ─────────────────────────────────────────────────────────
 
 def logistics_node(state: AgentState) -> AgentState:
@@ -249,11 +351,13 @@ def handle_chaos_event(event: str, response_loc: str) -> Tuple[str, List[str]]:
     """Returns (report_text, dispatched_robot_names)."""
     available = fleet_manager.get_available_robots()
 
+    # NEW
     if not available:
         msg = (
             f"⚠️ **FACTORY ALERT:** {event}\n\n"
             f"**CRITICAL:** No available units. All robots are offline, on mission, or charging."
         )
+        chaos_report_queue.put((event, response_loc, [], []))
         return msg, []
 
     disaster_units = [r for r in available if fleet_manager.robots[r]["type"] == "Disaster Mgmt"]
@@ -409,19 +513,48 @@ Rules:
     return []
 
 
-def schedule_completion(robot: str, task: str, is_chaos: bool = False, delay: float = 5.0):
-    """Marks mission 'ongoing' immediately; background timer flips to 'complete' after delay."""
-    fleet_manager.add_to_mission_board(robot, task, is_chaos)
+def schedule_completion(robot: str, task: str, is_chaos: bool = False, delay: float = 7.0):
+    """Starts LLM report immediately in parallel; shows En Route → Executing → Complete."""
+    token = fleet_manager.add_to_mission_board(robot, task, is_chaos)
+
+    # Start LLM report generation NOW, parallel with the delay timer
+    report_holder = [None]
+
+    def _generate():
+        report_holder[0] = generate_completion_report(robot, task, is_chaos)
+
+    gen_thread = threading.Thread(target=_generate, daemon=True)
+    gen_thread.start()
+
+    # En Route for 6s (visible), then Executing Mission for remainder
+    ENROUTE_DURATION = 6.0
+
+    if robot in fleet_manager.robots:
+        fleet_manager.robots[robot]['status'] = 'En Route'
+    if robot in fleet_manager.mission_board:
+        fleet_manager.mission_board[robot]['enroute'] = True
+
+    def _set_executing():
+        if robot in fleet_manager.robots:
+            if fleet_manager.robots[robot].get('status') == 'En Route':
+                fleet_manager.robots[robot]['status'] = 'Executing Mission'
+        if robot in fleet_manager.mission_board:
+            fleet_manager.mission_board[robot]['enroute'] = False
 
     def _fire():
-        report = generate_completion_report(robot, task, is_chaos)
+        # LLM started at t=0; max wait = delay*2 so total cap ≈ 3*delay
+        gen_thread.join(timeout=delay * 2)
+        report = report_holder[0] or f"{robot} completed: {task}. Mission accomplished."
         fleet_manager.complete_mission(robot)
-        fleet_manager.complete_mission_board(robot, report)
+        fleet_manager.complete_mission_board(robot, report, token=token)
+
+    t_exec = threading.Timer(ENROUTE_DURATION, _set_executing)
+    t_exec.daemon = True
+    t_exec.start()
 
     t = threading.Timer(delay, _fire)
     t.daemon = True
     t.start()
-
 
 # ── Router + graph ─────────────────────────────────────────────────────────
 

@@ -84,7 +84,7 @@ def recent_chat(limit: int = 8):
     return st.session_state.chat_history[-limit:]
 
 # ── Mission board renderer ────────────────────────────────────────────────
-
+@st.fragment(run_every=2)
 def render_mission_board():
     board = fleet_manager.mission_board
     if not board:
@@ -134,7 +134,11 @@ def render_mission_board():
         task_text = m["task"][:40] + ("…" if len(m["task"]) > 40 else "")
 
         if is_ongoing:
-            body_html = "<span style='color:#9ca3af;font-size:10px;white-space:normal;'>⏳ In progress…</span>"
+            is_enroute = m.get("enroute", False)
+            if is_enroute:
+                body_html = "<span style='color:#60a5fa;font-size:10px;white-space:normal;'>🚀 En route…</span>"
+            else:
+                body_html = "<span style='color:#9ca3af;font-size:10px;white-space:normal;'>⏳ Executing…</span>"
         else:
             raw = m.get("report") or ""
             snip = raw[:90] + ("…" if len(raw) > 90 else "")
@@ -210,7 +214,7 @@ with st.sidebar:
         report, dispatched = handle_chaos_event(event, response_loc)
         #st.session_state.chat_history.append(AIMessage(content=report))
         for robot in dispatched:
-            schedule_completion(robot, f"Emergency response: {event}", is_chaos=True, delay=5.0)
+            schedule_completion(robot, f"Emergency response: {event}", is_chaos=True, delay=7.0)
         st.rerun()
 
     if col_b.button("🔋 Recharge All", use_container_width=True):
@@ -271,9 +275,17 @@ with st.sidebar:
             badge = type_badge(stats['type'])
 
             st.markdown(f"**{health_color(stats['health'])} {name}** {badge} `{stats['type']}`{charge_tag}")
-            
+
             st.progress(stats['battery'] / 100, text=f"{battery_icon(stats['battery'])} {stats['battery']}%")
-            st.caption(f"📍 {stats['location']} | {stats['status']}")
+
+            # Derive status from mission board so it stays in sync with the board display
+            mb = fleet_manager.mission_board.get(name, {})
+            if mb.get('status') == 'ongoing':
+                display_status = '🚀 En Route' if mb.get('enroute') else '⚙️ Executing Mission'
+            else:
+                display_status = stats['status']
+
+            st.caption(f"📍 {stats['location']} | {display_status}")
             if stats.get('mission'):
                 st.caption(f"🎯 {stats['mission'][:45]}")
             st.divider()
@@ -307,6 +319,24 @@ with st.sidebar:
             st.caption(f"{'🚨' if is_alert else '📋'} `{entry['time']}` {entry['event']}")
 
 # ── Main HUD ──────────────────────────────────────────────────────────────
+for event, response_loc, responders, dispatch_results in drain_chaos_report_queue():
+    if not dispatch_results:
+        queued_report = (
+            f"⚠️ **FACTORY ALERT:** {event}\n\n"
+            f"**CRITICAL:** No available units to dispatch. All robots are currently on mission or offline."
+        )
+    else:
+        responder_lines = "\n".join([
+            f"  - **{name}** ({rtype}): {res}"
+            for name, rtype, res in dispatch_results
+        ])
+        queued_report = (
+            f"🚨 **FACTORY ALERT:** {event}\n\n"
+            f"**Units Dispatched:**\n{responder_lines}\n\n"
+            f"**Incident Report:**\nEmergency protocols engaged at {response_loc}."
+        )
+    st.session_state.chat_history.append(AIMessage(content=queued_report))
+    
 st.markdown("### 🛡️ Overwatch HUD")
 
 chat_container = st.container(height=370, border=False)
@@ -318,22 +348,6 @@ with chat_container:
 
 render_mission_board()
 
-for event, response_loc, responders, dispatch_results in drain_chaos_report_queue():
-    responder_lines = "\n".join([
-        f"  - **{name}** ({rtype}): {res}"
-        for name, rtype, res in dispatch_results
-    ])
-    queued_report = (
-        f"🚨 **FACTORY ALERT:** {event}\n\n"
-        f"**Units Dispatched:**\n{responder_lines}\n\n"
-        f"**Incident Report:**\nEmergency protocols engaged at {response_loc}."
-    )
-    if not any(isinstance(m, AIMessage) and m.content == queued_report for m in st.session_state.chat_history):
-        st.session_state.chat_history.append(AIMessage(content=queued_report))
-
-if fleet_manager._pending_timer_count > 0:
-    time.sleep(0.2)
-    st.rerun()
 
 # ── Pending approval ───────────────────────────────────────────────────────
 if st.session_state.pending_action:
@@ -352,12 +366,11 @@ if st.session_state.pending_action:
         target_loc = next(
             (loc for loc in ALL_LOCATIONS if loc.lower() in task_action.lower()), None
         )
-        if target_loc or "move" in task_action.lower():
-            res = fleet_manager.set_location(robot, target_loc or "Assembly-A")
-        else:
-            res = fleet_manager.assign_mission(robot, task_action)
+        if target_loc:
+            fleet_manager.set_location(robot, target_loc)
+        res = fleet_manager.assign_mission(robot, task_action)
         st.session_state.chat_history.append(AIMessage(content=res))
-        schedule_completion(robot, task_action, is_chaos=False, delay=5.0)
+        schedule_completion(robot, task_action, is_chaos=False, delay=7.0)
         st.session_state.pending_action = None
         st.rerun()
     if c2.button("❌ Abort", use_container_width=True):

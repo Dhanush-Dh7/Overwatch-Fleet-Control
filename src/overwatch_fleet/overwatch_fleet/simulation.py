@@ -38,7 +38,8 @@ class VirtualFleet:
 
     # ── Mission board ──────────────────────────────────────────────────────
 
-    def add_to_mission_board(self, robot: str, task: str, is_chaos: bool = False):
+    def add_to_mission_board(self, robot: str, task: str, is_chaos: bool = False) -> int:
+        token = self.mission_board.get(robot, {}).get("_token", 0) + 1
         self.mission_board[robot] = {
             "task": task,
             "status": "ongoing",
@@ -46,15 +47,36 @@ class VirtualFleet:
             "ts": datetime.now().strftime("%H:%M:%S"),
             "is_chaos": is_chaos,
             "completed_at": None,
+            "enroute": True,
+            "_token": token,
         }
         self._pending_timer_count += 1
+        return token
 
-    def complete_mission_board(self, robot: str, report: str):
-        if robot in self.mission_board:
-            self.mission_board[robot]["status"] = "complete"
-            self.mission_board[robot]["report"] = report
-            self.mission_board[robot]["completed_at"] = datetime.now().timestamp()
+    def complete_mission_board(self, robot: str, report: str, token: int = 0):
+        entry = self.mission_board.get(robot)
+        if entry is None:
+            return
+        if token and entry.get("_token") != token:
+            return  # stale timer, ignore
+        entry["status"] = "complete"
+        entry["report"] = report
+        entry["enroute"] = False
+        entry["completed_at"] = datetime.now().timestamp()
         self._pending_timer_count = max(0, self._pending_timer_count - 1)
+
+    def complete_mission(self, name):
+        if name not in self.robots:
+            return
+        unit = self.robots[name]
+        prev_task = unit.get("mission", "unknown task")
+        self.robots[name]["mission"] = None
+        self.robots[name]["status"] = "Idle"
+        # Clear enroute flag on board too in case timer hasn't fired yet
+        if name in self.mission_board:
+            self.mission_board[name]["enroute"] = False
+        self.mission_counts[name] = self.mission_counts.get(name, 0) + 1
+        self._log_event(f"{name} completed mission: {prev_task}")
 
     # ── Background simulation ──────────────────────────────────────────────
 
@@ -149,7 +171,7 @@ class VirtualFleet:
             if d["health"] == "Operational"
             and d["battery"] >= LOW_BATTERY_THRESHOLD
             and not d["charging"]
-            and d["status"] != "Executing Mission"
+            and d["status"] not in ("Executing Mission", "En Route")
         ]
 
     # ── Actions ────────────────────────────────────────────────────────────
