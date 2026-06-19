@@ -324,16 +324,18 @@ def logistics_node(state: AgentState) -> AgentState:
     task = action.get("action", "General Inspection")
     logs = state.get("reasoning_log", [])
 
+    # Move to target location first if one is specified in the task
     target_loc = next((loc for loc in ALL_LOCATIONS if loc.lower() in task.lower()), None)
+    move_result = ""
+    if target_loc:
+        move_result = fleet_manager.set_location(robot, target_loc)
 
-    if target_loc or any(w in task.lower() for w in ["move", "relocate", "go to", "patrol to"]):
-        destination = target_loc or "Assembly-A"
-        result = fleet_manager.set_location(robot, destination)
-        log_type = f"Relocation to {destination}"
-    else:
-        result = fleet_manager.assign_mission(robot, task)
-        log_type = f"Mission: {task[:40]}"
+    # Always assign the mission so status, ledger, and schedule_completion all fire correctly
+    result = fleet_manager.assign_mission(robot, task)
+    if move_result:
+        result = f"{move_result}\n{result}"
 
+    log_type = f"{'Relocate to ' + target_loc + ' + ' if target_loc else ''}Mission: {task[:40]}"
     history_entry = {"timestamp": str(datetime.now()), "robot": robot, "task": task, "result": result}
 
     return {
@@ -343,7 +345,6 @@ def logistics_node(state: AgentState) -> AgentState:
         "needs_approval": False,
         "pending_action": {},
     }
-
 
 # ── Chaos response ─────────────────────────────────────────────────────────
 

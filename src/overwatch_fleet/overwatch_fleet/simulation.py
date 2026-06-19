@@ -195,7 +195,7 @@ class VirtualFleet:
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.mission_ledger.append({"time": timestamp, "unit": name, "task": f"Relocate to {loc}", "status": "Complete"})
         self._log_event(f"{name} relocated from {old_loc} to {loc}")
-        if random.random() < 0.06:
+        if random.random() < 0.01:
             unit["health"] = "Malfunction"
             return f"Alert: {name} reached {loc} but experienced a hardware fault. Maintenance required."
         return f"Success: {name} moved from {old_loc} to {loc}. Battery: {unit['battery']}%."
