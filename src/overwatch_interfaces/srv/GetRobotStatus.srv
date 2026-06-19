@@ -1,0 +1,5 @@
+string name
+---
+string location
+string status
+int32 battery
