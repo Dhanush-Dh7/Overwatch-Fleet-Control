@@ -1,0 +1,11 @@
+# Goal
+string robot_name
+string target_location
+---
+# Result
+bool success
+string final_location
+---
+# Feedback
+string current_status
+float32 progress

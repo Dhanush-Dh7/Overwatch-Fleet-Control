@@ -9,7 +9,8 @@
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
-   <depend>overwatch_interfaces</depend>
+  <depend>overwatch_interfaces</depend>
+  <depend>nav2_msgs</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

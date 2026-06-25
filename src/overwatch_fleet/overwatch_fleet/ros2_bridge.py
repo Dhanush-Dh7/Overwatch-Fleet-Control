@@ -3,6 +3,8 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from overwatch_fleet.simulation import VirtualFleet
 from overwatch_interfaces.srv import GetRobotStatus
+from nav2_msgs.action import NavigateToPose
+from rclpy.action import ActionClient
 
 def sync_robot_states(fleet_manager):
     # Initialize node if not already done
@@ -55,40 +57,70 @@ class OverwatchBridge(Node):
         self.timer = self.create_timer(1.0, self.timer_callback)
         self.get_logger().info("Overwatch Bridge is online and publishing to /fleet_status.")
 
-        # Subscriber
-        self.subscription = self.create_subscription(String,'fleet_command',self.command_callback,10)
+        # Subscriber (Phase 4 updates applied here)
+        self.subscription = self.create_subscription(String, '/fleet_command', self.command_callback, 10)
 
         # Service
         self.srv = self.create_service(GetRobotStatus, 'get_robot_details', self.get_details_callback)
         self.get_logger().info("Service 'get_robot_details' is ready.")
 
+        self.ZONE_COORDS = {
+            "Assembly-A":      (2.0,  3.0),
+            "Assembly-B":      (2.0, -3.0),
+            "Storage-Bay":     (-2.0, 3.0),
+            "Processing-Unit": (-2.0,-3.0),
+            "Loading-Dock":    (0.0,  5.0),
+            "Charging-Bay":    (0.0, -5.0),
+            "Maintenance-Bay": (4.0,  0.0),
+            "Control-Room":    (-4.0, 0.0),
+            "Dispatch-Zone":   (0.0,  0.0),
+        }
+        self.nav_clients = {
+            name: ActionClient(self, NavigateToPose, f'/{name.lower()}/navigate_to_pose')
+            for name in self.fleet.robots
+        }
+        
+    def dispatch_to_location(self, robot_name: str, target_loc: str):
+        client = self.nav_clients.get(robot_name)
+        if not client or not client.wait_for_server(timeout_sec=2.0):
+            return
+        x, y = self.ZONE_COORDS.get(target_loc, (0.0, 0.0))
+        goal = NavigateToPose.Goal()
+        goal.pose.header.frame_id = 'map'
+        goal.pose.header.stamp = self.get_clock().now().to_msg()
+        goal.pose.pose.position.x = float(x)
+        goal.pose.pose.position.y = float(y)
+        goal.pose.pose.orientation.w = 1.0
+        self.fleet.robots[robot_name]['status'] = 'En Route'
+        client.send_goal_async(
+            goal,
+            feedback_callback=lambda fb: self._nav_feedback(robot_name, fb)
+        )
+        
+    def _nav_feedback(self, robot_name, feedback):
+        self.fleet.robots[robot_name]['status'] = 'En Route'
+
     def command_callback(self, msg):
         try:
-            # Expecting format "Manual:Indra"
-            if ":" not in msg.data:
-                return
-                
-            action, robot_name = msg.data.split(':')
+            # Phase 4 update: Handle Navigate:Robot:Location strings from app.py
+            data = msg.data
+            parts = data.split(':')
             
-            if robot_name in self.fleet.robots:
-                # Update the simulation state
-                self.fleet.robots[robot_name]["manual_override"] = (action == "Manual")
-                self.get_logger().info(f"SUCCESS: {robot_name} mode set to {action}")
-            else:
-                self.get_logger().warn(f"Robot '{robot_name}' not recognized.")
+            if parts[0] == "Navigate" and len(parts) == 3:
+                robot_name, target_loc = parts[1], parts[2]
+                if robot_name in self.nav_clients:
+                    self.dispatch_to_location(robot_name, target_loc)
+                    self.get_logger().info(f"Command received: Navigating {robot_name} to {target_loc}")
+                else:
+                    self.get_logger().warn(f"Robot '{robot_name}' not recognized.")        
         except Exception as e:
             self.get_logger().error(f"Command Error: {e}")
         
     def timer_callback(self):
-        print("DEBUG: Fleet size is:", len(self.fleet.robots), flush=True)
-        print("DEBUG: Fleet keys are:", list(self.fleet.robots.keys()), flush=True)
+        # Cleaned up the debug prints so it doesn't spam your terminal
         msg = String()
-        # Instead of just casting the whole dict to str(), 
-        # let's create a readable summary of all robots
         fleet_status = {}
         for name, robot_data in self.fleet.robots.items():
-            # Check if robot_data is a dict (which it is, according to the error)
-            # Use bracket notation to safely access the values
             fleet_status[name] = {
                 "location": robot_data.get('location', 'Unknown'),
                 "status": robot_data.get('status', 'Unknown'),
