@@ -1,0 +1,106 @@
+<?xml version="1.0" ?>
+<sdf version="1.9">
+  <world name="factory">
+
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+
+    <light name="sun" type="directional">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>1 1 1 1</diffuse>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>30 30</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>30 30</size></plane></geometry>
+          <material><ambient>0.3 0.3 0.3 1</ambient></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Zone markers: Assembly-A (green) -->
+    <model name="zone_assembly_a">
+      <static>true</static>
+      <pose>2 3 0.05 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.5 1.5 0.1</size></box></geometry>
+          <material><ambient>0 0.8 0 0.6</ambient></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Assembly-B -->
+    <model name="zone_assembly_b">
+      <static>true</static>
+      <pose>2 -3 0.05 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.5 1.5 0.1</size></box></geometry>
+          <material><ambient>0 0.8 0 0.6</ambient></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Storage-Bay (blue) -->
+    <model name="zone_storage_bay">
+      <static>true</static>
+      <pose>-2 3 0.05 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.5 1.5 0.1</size></box></geometry>
+          <material><ambient>0 0.3 0.9 0.6</ambient></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Processing-Unit (blue) -->
+    <model name="zone_processing_unit">
+      <static>true</static>
+      <pose>-2 -3 0.05 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.5 1.5 0.1</size></box></geometry>
+          <material><ambient>0 0.3 0.9 0.6</ambient></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Loading-Dock (orange) -->
+    <model name="zone_loading_dock">
+      <static>true</static>
+      <pose>0 5 0.05 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.5 1.5 0.1</size></box></geometry>
+          <material><ambient>0.9 0.5 0 0.6</ambient></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Charging-Bay (yellow) -->
+    <model name="zone_charging_bay">
+      <static>true</static>
+      <pose>0 -5 0.05 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.5 1.5 0.1</size></box></geometry>
+          <material><ambient>0.9 0.9 0 0.6</ambient></material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

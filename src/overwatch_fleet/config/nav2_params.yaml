@@ -1,0 +1,16 @@
+# Minimal params — one set, applied to all robots via namespace substitution
+bt_navigator:
+  ros__parameters:
+    use_sim_time: true
+    global_frame: map
+    robot_base_frame: base_link
+
+controller_server:
+  ros__parameters:
+    use_sim_time: true
+    controller_plugins: ["FollowPath"]
+
+planner_server:
+  ros__parameters:
+    use_sim_time: true
+    planner_plugins: ["GridBased"]

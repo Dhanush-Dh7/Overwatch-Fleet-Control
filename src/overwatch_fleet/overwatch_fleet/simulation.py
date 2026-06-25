@@ -65,18 +65,6 @@ class VirtualFleet:
         entry["completed_at"] = datetime.now().timestamp()
         self._pending_timer_count = max(0, self._pending_timer_count - 1)
 
-    def complete_mission(self, name):
-        if name not in self.robots:
-            return
-        unit = self.robots[name]
-        prev_task = unit.get("mission", "unknown task")
-        self.robots[name]["mission"] = None
-        self.robots[name]["status"] = "Idle"
-        # Clear enroute flag on board too in case timer hasn't fired yet
-        if name in self.mission_board:
-            self.mission_board[name]["enroute"] = False
-        self.mission_counts[name] = self.mission_counts.get(name, 0) + 1
-        self._log_event(f"{name} completed mission: {prev_task}")
 
     # ── Background simulation ──────────────────────────────────────────────
 
@@ -114,7 +102,7 @@ class VirtualFleet:
                         self._log_event(f"{name} fully charged, resuming patrol")
                     continue
 
-                if unit["status"] == "Executing Mission":
+                if unit["status"] in ("Executing Mission", "En Route"):
                     drain = random.randint(2, 5)
                     unit["battery"] = max(0, unit["battery"] - drain)
                     if unit["battery"] == 0:
@@ -211,7 +199,6 @@ class VirtualFleet:
         timestamp = datetime.now().strftime("%H:%M:%S")
         impact = 20 if "emergency" in task.lower() else 10
         unit["battery"] = max(0, unit["battery"] - impact)
-        self.robots[name]["manual_override"] = True 
         self.robots[name]["mission"] = task
         self.robots[name]["status"] = "Executing Mission"
         unit["charging"] = False
@@ -226,7 +213,8 @@ class VirtualFleet:
         prev_task = unit.get("mission", "unknown task")
         self.robots[name]["mission"] = None
         self.robots[name]["status"] = "Idle"
-        
+        if name in self.mission_board:
+            self.mission_board[name]["enroute"] = False
         self.mission_counts[name] = self.mission_counts.get(name, 0) + 1
         self._log_event(f"{name} completed mission: {prev_task}")
 
