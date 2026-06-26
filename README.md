@@ -26,7 +26,8 @@ Overwatch implements an Agentic AI Fleet Orchestration layer:
 ![HUD Preview](https://github.com/user-attachments/assets/91a5a2d3-614f-4e52-9bbd-e2324a4ae80a)
 
 ### System Architecture
-![Logic Flow](https://github.com/user-attachments/assets/e866caa7-2edf-42be-a305-07a31cabfda8)
+<img width="650" height="1000" alt="Cognitive Core Execution-2026-06-26-095906" src="https://github.com/user-attachments/assets/69a4359e-59a6-43cf-9387-ad0d8bc40e0d" />
+
 
 ---
 
