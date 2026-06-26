@@ -47,26 +47,43 @@ def generate_launch_description():
     )
     ld.add_action(clock_bridge)
 
-    # 3. Spawn each robot using Harmonic's 'create' tool
+    # 3. Spawn each robot and bridge its sensors
     for robot in ROBOTS:
         x, y = START_POSITIONS[robot]
         
-        # Resolve the URDF path dynamically
-        urdf_file = PathJoinSubstitution([tb3_pkg, 'urdf', 'turtlebot3_burger.urdf'])
+        # A. Attempt to spawn the URDF/SDF
+        sdf_file = PathJoinSubstitution([overwatch_pkg, 'models', 'overwatch_agent.sdf'])
         
         ld.add_action(Node(
             package='ros_gz_sim', 
             executable='create',
             arguments=[
                 '-name', robot,
-                '-file', urdf_file,
+                '-file', sdf_file,
                 '-x', str(x), 
                 '-y', str(y),
-                '-z', '0.1' # Spawns slightly above ground to prevent physics glitches
+                '-z', '0.1' 
             ],
             output='screen'
         ))
 
+        # B. Establish the ROS <-> Gazebo Sensor Bridge for each agent
+        robot_bridge = Node(
+            package='ros_gz_bridge',
+            executable='parameter_bridge',
+            arguments=[
+                f'/world/factory/model/{robot}/link/lidar_link/sensor/lidar/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
+                f'/model/{robot}/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry',
+                f'/model/{robot}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
+            ],
+            remappings=[
+                (f'/world/factory/model/{robot}/link/lidar_link/sensor/lidar/scan', f'/{robot}/scan'),
+                (f'/model/{robot}/odometry', f'/{robot}/odom'),
+                (f'/model/{robot}/cmd_vel', f'/{robot}/cmd_vel'),
+            ],
+            output='screen'
+        )
+        ld.add_action(robot_bridge)
     # 4. Launch your Overwatch Bridge Node
     # I changed executable to 'bridge_node' to match your setup.py entry points
     ld.add_action(Node(
