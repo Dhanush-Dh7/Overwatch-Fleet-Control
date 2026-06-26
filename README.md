@@ -1,8 +1,8 @@
 # Overwatch: Fleet Control
 
-> **Project Status:** Under Active Development.
-> Functional Core: ROS 2 Jazzy/Gazebo Harmonic multi-agent simulation, Nav2 stack integration, Agentic Strategist Node, and real-time Streamlit HUD.
-Next Target: High-fidelity 3D telemetry visualization and advanced mission orchestration integration is underway and will be merged to the main branch soon.
+> **Project Status:** Under Active Development  
+> **Current Status:** ROS 2 Jazzy/Gazebo Harmonic multi-agent simulation, Nav2 stack integration, Agentic Strategist Node, and real-time Streamlit HUD are functional.  
+> **Next Target:** High-fidelity 3D telemetry visualization and advanced mission orchestration integration are in progress and will be merged to the main branch soon.  
 
 Overwatch: Fleet Control is an advanced orchestration system designed to transition industrial automation from rigid, scripted processes to intelligent, autonomous agentic workflows. By integrating a "Strategist Node" powered by Gemini 2.0 Flash, the system enables dynamic task assignment, real-time emergency response, and proactive fleet maintenance.
 
