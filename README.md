@@ -1,7 +1,8 @@
 # Overwatch: Fleet Control
 
 > **Project Status:** Under Active Development.
-> Core fleet logic and simulation are functional. ROS 2 hardware integration is currently being modularized in the `feature/state-management-refactor` branch and will be merged into `main` shortly.
+> Functional Core: ROS 2 Jazzy/Gazebo Harmonic multi-agent simulation, Nav2 stack integration, Agentic Strategist Node, and real-time Streamlit HUD.
+Next Target: High-fidelity 3D telemetry visualization and advanced mission orchestration integration is underway and will be merged to the main branch soon.
 
 Overwatch: Fleet Control is an advanced orchestration system designed to transition industrial automation from rigid, scripted processes to intelligent, autonomous agentic workflows. By integrating a "Strategist Node" powered by Gemini 2.0 Flash, the system enables dynamic task assignment, real-time emergency response, and proactive fleet maintenance.
 
@@ -36,10 +37,13 @@ Overwatch implements an Agentic AI Fleet Orchestration layer:
 * **Interface:** Streamlit (Custom Terminal HUD)
 
 ## 📊 Key Features
-* **Autonomous Dispatch:** Command a fleet with natural language (e.g., "Secure the factory").
-* **Real-time HUD:** Monitor unit vitals, location maps, and mission progress.
-* **Mission Logging:** Records actions for predictive maintenance and performance analysis.
-* **Safety Authorization:** Integrated request system for high-risk operations.
+* **Autonomous Multi-Agent Fleet:** Deploys and manages a coordinated fleet of five units (Indra, Vayu, Trishul, Agni, and Rudra).
+* **ROS 2 Native Orchestration:** Built on ROS 2 Jazzy with a standardized `colcon` build workflow, ensuring modular and scalable control.
+* **Gazebo Harmonic Simulation:** High-fidelity physics-based simulation of industrial factory environments using headless rendering for optimized performance.
+* **Agentic Strategist Node:** Powered by Gemini 2.0 Flash; interprets natural language inputs into logical task sequences and mission plans.
+* **Nav2 Integration:** Multi-robot navigation stack for path planning, obstacle avoidance, and precise coordinate execution.
+* **Real-time Fleet HUD:** A custom Streamlit-based dashboard providing real-time telemetry, unit vitals, and mission status monitoring.
+* **Resilient Infrastructure:** Containerized deployment using Docker for environment consistency and operational stability.
 
 ## 🚀 Setup Instructions
 1. **Clone the repository:**
