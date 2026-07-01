@@ -158,6 +158,7 @@
     <joint name="lidar_joint" type="fixed">
       <parent>base_link</parent>
       <child>lidar_link</child>
+      <pose>0 0 0.1 0 0 0</pose> 
     </joint>
 
     <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">

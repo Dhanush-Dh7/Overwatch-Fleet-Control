@@ -1,0 +1,180 @@
+<sdf version='1.11'>
+  <model name='overwatch_agent'>
+    <pose>0 0 0.10000000000000001 0 0 0</pose>
+    <link name='base_link'>
+      <inertial>
+        <mass>5</mass>
+        <inertia>
+          <ixx>0.050000000000000003</ixx>
+          <iyy>0.050000000000000003</iyy>
+          <izz>0.050000000000000003</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name='base_collision'>
+        <geometry>
+          <cylinder>
+            <radius>0.25</radius>
+            <length>0.14999999999999999</length>
+          </cylinder>
+        </geometry>
+      </collision>
+      <visual name='base_visual'>
+        <geometry>
+          <cylinder>
+            <radius>0.25</radius>
+            <length>0.14999999999999999</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.899999976 0.400000006 0.100000001 1</ambient>
+          <diffuse>0.899999976 0.400000006 0.100000001 1</diffuse>
+        </material>
+      </visual>
+    </link>
+    <link name='left_wheel'>
+      <pose>0 0.29999999999999999 -0.050000000000000003 -1.5707 0 0</pose>
+      <inertial>
+        <mass>1</mass>
+        <inertia>
+          <ixx>0.0050000000000000001</ixx>
+          <iyy>0.0050000000000000001</iyy>
+          <izz>0.0050000000000000001</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name='left_wheel_collision'>
+        <geometry>
+          <cylinder>
+            <radius>0.10000000000000001</radius>
+            <length>0.050000000000000003</length>
+          </cylinder>
+        </geometry>
+      </collision>
+      <visual name='left_wheel_visual'>
+        <geometry>
+          <cylinder>
+            <radius>0.10000000000000001</radius>
+            <length>0.050000000000000003</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.200000003 0.200000003 0.200000003 1</ambient>
+          <diffuse>0.200000003 0.200000003 0.200000003 1</diffuse>
+        </material>
+      </visual>
+    </link>
+    <link name='right_wheel'>
+      <pose>0 -0.29999999999999999 -0.050000000000000003 -1.5707 0 0</pose>
+      <inertial>
+        <mass>1</mass>
+        <inertia>
+          <ixx>0.0050000000000000001</ixx>
+          <iyy>0.0050000000000000001</iyy>
+          <izz>0.0050000000000000001</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name='right_wheel_collision'>
+        <geometry>
+          <cylinder>
+            <radius>0.10000000000000001</radius>
+            <length>0.050000000000000003</length>
+          </cylinder>
+        </geometry>
+      </collision>
+      <visual name='right_wheel_visual'>
+        <geometry>
+          <cylinder>
+            <radius>0.10000000000000001</radius>
+            <length>0.050000000000000003</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.200000003 0.200000003 0.200000003 1</ambient>
+          <diffuse>0.200000003 0.200000003 0.200000003 1</diffuse>
+        </material>
+      </visual>
+    </link>
+    <link name='lidar_link'>
+      <pose>0 0 0.12 0 0 0</pose>
+      <inertial>
+        <mass>0.20000000000000001</mass>
+        <inertia>
+          <ixx>0.001</ixx>
+          <iyy>0.001</iyy>
+          <izz>0.001</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <sensor name='lidar' type='gpu_lidar'>
+        <pose>0 0 0 0 0 0</pose>
+        <update_rate>10</update_rate>
+        <ray>
+          <scan>
+            <horizontal>
+              <samples>360</samples>
+              <resolution>1</resolution>
+              <min_angle>-3.1415899999999999</min_angle>
+              <max_angle>3.1415899999999999</max_angle>
+            </horizontal>
+          </scan>
+          <range>
+            <min>0.14999999999999999</min>
+            <max>12</max>
+            <resolution>0.01</resolution>
+          </range>
+        </ray>
+        <always_on>true</always_on>
+        <visualize>true</visualize>
+      </sensor>
+    </link>
+    <joint name='left_wheel_joint' type='revolute'>
+      <parent>base_link</parent>
+      <child>left_wheel</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1.7976900000000001e+308</lower>
+          <upper>1.7976900000000001e+308</upper>
+        </limit>
+      </axis>
+    </joint>
+    <joint name='right_wheel_joint' type='revolute'>
+      <parent>base_link</parent>
+      <child>right_wheel</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1.7976900000000001e+308</lower>
+          <upper>1.7976900000000001e+308</upper>
+        </limit>
+      </axis>
+    </joint>
+    <joint name='lidar_joint' type='fixed'>
+      <parent>base_link</parent>
+      <child>lidar_link</child>
+      <pose>0 0 0.10000000000000001 0 0 0</pose>
+    </joint>
+    <plugin name='gz::sim::systems::DiffDrive' filename='gz-sim-diff-drive-system'>
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+      <wheel_separation>0.6</wheel_separation>
+      <wheel_radius>0.1</wheel_radius>
+      <odom_publish_frequency>30</odom_publish_frequency>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_link</child_frame_id>
+    </plugin>
+    <plugin name='gz::sim::systems::JointStatePublisher' filename='gz-sim-joint-state-publisher-system'>
+      <topic>joint_states</topic>
+    </plugin>
+  </model>
+</sdf>

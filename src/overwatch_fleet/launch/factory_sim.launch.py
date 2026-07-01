@@ -6,7 +6,6 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
 
-# Indian mythological names for the fleet
 ROBOTS = ["indra", "vayu", "trishul", "agni", "rudra"]
 START_POSITIONS = {
     "indra":   ( 2.0,  3.0),
@@ -19,26 +18,22 @@ START_POSITIONS = {
 def generate_launch_description():
     ld = LaunchDescription()
 
-    # Define package paths
     overwatch_pkg = FindPackageShare('overwatch_fleet')
     ros_gz_sim_pkg = FindPackageShare('ros_gz_sim')
-    tb3_pkg = FindPackageShare('turtlebot3_description')
 
-    # 1. Launch Gazebo Harmonic (Headless Server)
-    # This uses the .sdf file from your shell script instead of the old .world file
     world_file = PathJoinSubstitution([overwatch_pkg, 'worlds', 'factory.sdf'])
     
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([ros_gz_sim_pkg, 'launch', 'gz_sim.launch.py'])
         ),
-        # -r = run on start, -s = server only (headless)
-        launch_arguments={'gz_args': ['-r -s --headless-rendering ', world_file]}.items()
+        launch_arguments={
+            'gz_args': ['-r -s --headless-rendering ', world_file],
+            'use_sim_time': 'True'
+        }.items()
     )
     ld.add_action(gz_sim)
 
-    # 2. Start the ROS-Gazebo Clock Bridge
-    # Nav2 absolutely needs this to sync ROS time with Gazebo Harmonic time
     clock_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
@@ -47,12 +42,10 @@ def generate_launch_description():
     )
     ld.add_action(clock_bridge)
 
-    # 3. Spawn each robot and bridge its sensors
     for robot in ROBOTS:
         x, y = START_POSITIONS[robot]
         
-        # A. Attempt to spawn the URDF/SDF
-        sdf_file = PathJoinSubstitution([overwatch_pkg, 'models', 'overwatch_agent.sdf'])
+        sdf_file = PathJoinSubstitution([overwatch_pkg, 'models', 'overwatch_agent.urdf'])
         
         ld.add_action(Node(
             package='ros_gz_sim', 
@@ -66,8 +59,31 @@ def generate_launch_description():
             ],
             output='screen'
         ))
+        
+        ld.add_action(IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                PathJoinSubstitution([FindPackageShare('nav2_bringup'), 'launch', 'bringup_launch.py'])
+            ),
+            launch_arguments={
+                'namespace': robot,
+                'use_namespace': 'True',
+                'use_sim_time': 'True',
+                'params_file': PathJoinSubstitution([FindPackageShare('nav2_bringup'), 'params', 'nav2_params.yaml']),
+                'autostart': 'True',
+                'map': PathJoinSubstitution([overwatch_pkg, 'maps', 'factory_map.yaml'])
+            }.items()
+        ))
+        
+        ld.add_action(Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name=f'map_to_{robot}_odom',
+            # This explicitly anchors each unique robot to the global map origin
+            arguments=[str(x), str(y), '0', '0', '0', '0', 'map', f'{robot}/odom'],
+            parameters=[{'use_sim_time': True}],
+            output='screen'
+        ))
 
-        # B. Establish the ROS <-> Gazebo Sensor Bridge for each agent
         robot_bridge = Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',
@@ -75,24 +91,52 @@ def generate_launch_description():
                 f'/world/factory/model/{robot}/link/lidar_link/sensor/lidar/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
                 f'/model/{robot}/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry',
                 f'/model/{robot}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
+                
             ],
             remappings=[
                 (f'/world/factory/model/{robot}/link/lidar_link/sensor/lidar/scan', f'/{robot}/scan'),
-                (f'/model/{robot}/odometry', f'/{robot}/odom'),
+                (f'/model/{robot}/odometry', f'/{robot}/odom_raw'), # <-- Routes to our interceptor
                 (f'/model/{robot}/cmd_vel', f'/{robot}/cmd_vel'),
             ],
             output='screen'
         )
         ld.add_action(robot_bridge)
-    # 4. Launch your Overwatch Bridge Node
-    # I changed executable to 'bridge_node' to match your setup.py entry points
+
+        ld.add_action(Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='static_tf_lidar_' + robot,
+            arguments=['0', '0', '0', '0', '0', '0', f'{robot}/base_link', f'{robot}/lidar_link/lidar'],
+            parameters=[{'use_sim_time': True}],
+            output='screen'
+        ))
+       
+    ld.add_action(Node(
+        package='nav2_map_server',
+        executable='map_server',
+        name='map_server',
+        output='screen',
+        parameters=[{
+            'yaml_filename': PathJoinSubstitution([FindPackageShare('overwatch_fleet'), 'maps', 'factory_map.yaml']),
+            'use_sim_time': True
+        }]
+    ))
+
+    ld.add_action(Node(
+        package='nav2_lifecycle_manager',
+        executable='lifecycle_manager',
+        name='lifecycle_manager_map',
+        output='screen',
+        parameters=[{'autostart': True, 'node_names': ['map_server']}]
+    ))    
+        
     ld.add_action(Node(
         package='overwatch_fleet',
         executable='bridge_node',
+        parameters=[{'use_sim_time': True}],
         output='screen'
     ))
 
-    # 5. Launch the Streamlit Dashboard
     streamlit_dashboard = ExecuteProcess(
         cmd=[
             'streamlit', 'run', 'src/overwatch_fleet/overwatch_fleet/app.py',
@@ -105,5 +149,12 @@ def generate_launch_description():
         output='screen'
     )
     ld.add_action(streamlit_dashboard)
+
+    ld.add_action(Node(
+        package='foxglove_bridge',
+        executable='foxglove_bridge',
+        parameters=[{'port': 8765, 'use_sim_time': True}],
+        output='screen'
+    ))
 
     return ld
