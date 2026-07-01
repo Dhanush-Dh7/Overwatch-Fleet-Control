@@ -3,6 +3,9 @@ import re
 import json
 import threading
 import queue
+import rclpy
+from std_msgs.msg import String
+from rclpy.node import Node
 from datetime import datetime
 from typing import TypedDict, List, Optional, Tuple
 from dotenv import load_dotenv
@@ -16,6 +19,25 @@ load_dotenv()
 fleet_manager = VirtualFleet()
 fleet_manager.start_simulation()
 
+class FleetCommandNode(Node):
+    def __init__(self):
+        super().__init__('fleet_commander')
+        self.publisher_ = self.create_publisher(String, '/fleet_command', 10)
+
+    def send_nav_command(self, robot, loc):
+        msg = String()
+        msg.data = f"Navigate:{robot}:{loc}"
+        self.publisher_.publish(msg)
+        self.get_logger().info(f"Published: {msg.data}")
+
+if not rclpy.ok():
+    rclpy.init()
+
+if 'fleet_cmd_node' not in globals():
+    fleet_cmd_node = FleetCommandNode()
+
+def send_ros_command(robot_name, target_loc):
+    fleet_cmd_node.send_nav_command(robot_name, target_loc)
 
 class AgentState(TypedDict):
     messages: List[BaseMessage]
@@ -23,8 +45,7 @@ class AgentState(TypedDict):
     needs_approval: bool
     pending_action: dict
     mission_history: List[dict]
-
-
+    
 _llm = None
 chaos_report_queue = queue.Queue()
 
@@ -324,13 +345,12 @@ def logistics_node(state: AgentState) -> AgentState:
     task = action.get("action", "General Inspection")
     logs = state.get("reasoning_log", [])
 
-    # Move to target location first if one is specified in the task
     target_loc = next((loc for loc in ALL_LOCATIONS if loc.lower() in task.lower()), None)
     move_result = ""
     if target_loc:
         move_result = fleet_manager.set_location(robot, target_loc)
+        send_ros_command(robot, target_loc)
 
-    # Always assign the mission so status, ledger, and schedule_completion all fire correctly
     result = fleet_manager.assign_mission(robot, task)
     if move_result:
         result = f"{move_result}\n{result}"
@@ -349,10 +369,8 @@ def logistics_node(state: AgentState) -> AgentState:
 # ── Chaos response ─────────────────────────────────────────────────────────
 
 def handle_chaos_event(event: str, response_loc: str) -> Tuple[str, List[str]]:
-    """Returns (report_text, dispatched_robot_names)."""
     available = fleet_manager.get_available_robots()
 
-    # NEW
     if not available:
         msg = (
             f"⚠️ **FACTORY ALERT:** {event}\n\n"
@@ -368,6 +386,7 @@ def handle_chaos_event(event: str, response_loc: str) -> Tuple[str, List[str]]:
     dispatch_results = []
     for robot in responders:
         res = fleet_manager.set_location(robot, response_loc)
+        send_ros_command(robot, response_loc)
         dispatch_results.append((robot, fleet_manager.robots[robot]["type"], res))
         fleet_manager.assign_mission(robot, f"Emergency response: {event}")
 

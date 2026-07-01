@@ -6,7 +6,7 @@ from brain import (
     agent_executor, fleet_manager,
     handle_chaos_event, schedule_completion,
     generate_incident_summary, plan_multi_step,
-    drain_chaos_report_queue,
+    drain_chaos_report_queue, send_ros_command
 )
 from langchain_core.messages import HumanMessage, AIMessage
 from dotenv import load_dotenv
@@ -366,6 +366,8 @@ if st.session_state.pending_action:
         )
         if target_loc:
             fleet_manager.set_location(robot, target_loc)
+            send_ros_command(robot, target_loc)
+            
         res = fleet_manager.assign_mission(robot, task_action)
         st.session_state.chat_history.append(AIMessage(content=res))
         schedule_completion(robot, task_action, is_chaos=False, delay=7.0)

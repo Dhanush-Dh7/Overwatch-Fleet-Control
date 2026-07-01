@@ -1,3 +1,6 @@
+from tf2_ros import TransformBroadcaster
+from geometry_msgs.msg import TransformStamped
+from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
@@ -7,14 +10,12 @@ from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 
 def sync_robot_states(fleet_manager):
-    # Initialize node if not already done
     if not rclpy.ok():
         rclpy.init()
     
     node = rclpy.create_node('fleet_sync_node')
     client = node.create_client(GetRobotStatus, '/get_robot_details')
     
-    # Wait for the service to be available
     if not client.wait_for_service(timeout_sec=1.0):
         node.get_logger().warn("Service /get_robot_details not available")
         node.destroy_node()
@@ -25,17 +26,14 @@ def sync_robot_states(fleet_manager):
         req.name = name
         
         future = client.call_async(req)
-        # Use a small timeout to keep the UI responsive
         rclpy.spin_until_future_complete(node, future, timeout_sec=0.5)
         
         if future.result():
             res = future.result()
-            # Update the local state dictionary used by Streamlit
             fleet_manager.robots[name]['location'] = res.location
             fleet_manager.robots[name]['status'] = res.status
             fleet_manager.robots[name]['battery'] = res.battery
             
-            # Map ROS status to your UI health system
             if res.status == 'Maintenance':
                 fleet_manager.robots[name]['health'] = "Maintenance Required"
             elif res.status == 'Malfunction':
@@ -46,21 +44,16 @@ def sync_robot_states(fleet_manager):
     node.destroy_node()
 
 class OverwatchBridge(Node):
-    def __init__(self):
-        super().__init__('overwatch_bridge')
-        # Initialize simulation engine
-        self.fleet = VirtualFleet()
+    def __init__(self, shared_fleet):
+        super().__init__('overwatch_bridge',parameters=[{'use_sim_time': True}])
+        self.fleet = shared_fleet
         self.fleet.start_simulation()
         
-        # Publisher to announce status to other ROS 2 nodes
         self.publisher = self.create_publisher(String, '/fleet_status', 10)
         self.timer = self.create_timer(1.0, self.timer_callback)
         self.get_logger().info("Overwatch Bridge is online and publishing to /fleet_status.")
 
-        # Subscriber (Phase 4 updates applied here)
         self.subscription = self.create_subscription(String, '/fleet_command', self.command_callback, 10)
-
-        # Service
         self.srv = self.create_service(GetRobotStatus, 'get_robot_details', self.get_details_callback)
         self.get_logger().info("Service 'get_robot_details' is ready.")
 
@@ -79,8 +72,29 @@ class OverwatchBridge(Node):
             name: ActionClient(self, NavigateToPose, f'/{name.lower()}/navigate_to_pose')
             for name in self.fleet.robots
         }
+
+        # --- THE ODOM INTERCEPTOR ---
+        self.tf_broadcaster = TransformBroadcaster(self)
+        self.odom_subs = []
+        self.odom_pubs = {}
+        
+        for name in self.fleet.robots:
+            robot_id = name.lower()
+            
+            # Publisher for the clean data Nav2 will read
+            self.odom_pubs[robot_id] = self.create_publisher(Odometry, f'/{robot_id}/odom', 10)
+            
+            # Subscriber reading the raw data from Gazebo
+            sub = self.create_subscription(
+                Odometry,
+                f'/{robot_id}/odom_raw',
+                lambda msg, rid=robot_id: self.odom_callback(msg, rid),
+                10
+            )
+            self.odom_subs.append(sub)
         
     def dispatch_to_location(self, robot_name: str, target_loc: str):
+        # (Keep your existing dispatch_to_location code here)
         client = self.nav_clients.get(robot_name)
         if not client or not client.wait_for_server(timeout_sec=2.0):
             return
@@ -100,12 +114,29 @@ class OverwatchBridge(Node):
     def _nav_feedback(self, robot_name, feedback):
         self.fleet.robots[robot_name]['status'] = 'En Route'
 
+    def odom_callback(self, msg, robot_id):
+        t = TransformStamped()
+        t.header.stamp = msg.header.stamp 
+        # FIX: Ensure unique namespaces for every robot's TF
+        t.header.frame_id = f'{robot_id}/odom' 
+        t.child_frame_id = f'{robot_id}/base_link'
+        
+        t.transform.translation.x = msg.pose.pose.position.x
+        t.transform.translation.y = msg.pose.pose.position.y
+        t.transform.translation.z = msg.pose.pose.position.z
+        t.transform.rotation = msg.pose.pose.orientation
+        
+        self.tf_broadcaster.sendTransform(t)
+
+        # FIX: Also update the Odometry message frame IDs so Nav2 listens to the right one
+        msg.header.frame_id = f'{robot_id}/odom'
+        msg.child_frame_id = f'{robot_id}/base_link'
+        self.odom_pubs[robot_id].publish(msg)
+        
     def command_callback(self, msg):
         try:
-            # Phase 4 update: Handle Navigate:Robot:Location strings from app.py
             data = msg.data
             parts = data.split(':')
-            
             if parts[0] == "Navigate" and len(parts) == 3:
                 robot_name, target_loc = parts[1], parts[2]
                 if robot_name in self.nav_clients:
@@ -117,7 +148,6 @@ class OverwatchBridge(Node):
             self.get_logger().error(f"Command Error: {e}")
         
     def timer_callback(self):
-        # Cleaned up the debug prints so it doesn't spam your terminal
         msg = String()
         fleet_status = {}
         for name, robot_data in self.fleet.robots.items():
@@ -126,22 +156,16 @@ class OverwatchBridge(Node):
                 "status": robot_data.get('status', 'Unknown'),
                 "battery": robot_data.get('battery', 0)
             }
-
         msg.data = str(fleet_status)
         self.publisher.publish(msg)
 
     def get_details_callback(self, request, response):
-        self.get_logger().info(f"Incoming request for robot: {request.name}")
-        
-        # Access the live simulation state directly
         if request.name in self.fleet.robots:
             robot = self.fleet.robots[request.name]
             response.location = str(robot.get('location', 'Unknown'))
             response.status = str(robot.get('status', 'Unknown'))
             response.battery = int(robot.get('battery', 0))
-            self.get_logger().info(f"Returning live data for {request.name}")
         else:
-            self.get_logger().warn(f"Robot {request.name} not found in fleet.")
             response.location = "Unknown"
             response.status = "Not Found"
             response.battery = 0
@@ -151,7 +175,8 @@ class OverwatchBridge(Node):
     
 def main(args=None):
     rclpy.init(args=args)
-    bridge = OverwatchBridge()
+    # Provided a default VirtualFleet instance in case it is run standalone
+    bridge = OverwatchBridge(VirtualFleet())
     rclpy.spin(bridge)
     bridge.destroy_node()
     rclpy.shutdown()
