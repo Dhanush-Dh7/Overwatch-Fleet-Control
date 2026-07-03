@@ -45,7 +45,9 @@ def sync_robot_states(fleet_manager):
 
 class OverwatchBridge(Node):
     def __init__(self, shared_fleet):
-        super().__init__('overwatch_bridge',parameters=[{'use_sim_time': True}])
+        # CRITICAL FIX: Removed the invalid 'parameters' keyword argument. 
+        # The launch file already handles passing 'use_sim_time' to this node.
+        super().__init__('overwatch_bridge')
         self.fleet = shared_fleet
         self.fleet.start_simulation()
         
@@ -78,9 +80,10 @@ class OverwatchBridge(Node):
         self.odom_subs = []
         self.odom_pubs = {}
         
-        for name in self.fleet.robots:
-            robot_id = name.lower()
-            
+        # Explicitly define the robots so subscriptions generate properly
+        robots = ["indra", "vayu", "trishul", "agni", "rudra"]
+        
+        for robot_id in robots:
             # Publisher for the clean data Nav2 will read
             self.odom_pubs[robot_id] = self.create_publisher(Odometry, f'/{robot_id}/odom', 10)
             
@@ -115,10 +118,12 @@ class OverwatchBridge(Node):
         self.fleet.robots[robot_name]['status'] = 'En Route'
 
     def odom_callback(self, msg, robot_id):
+        # Print a message so we know the data is actually flowing
+        self.get_logger().info(f"Processing odometry for {robot_id}")
+        
         t = TransformStamped()
         t.header.stamp = msg.header.stamp 
-        # FIX: Ensure unique namespaces for every robot's TF
-        t.header.frame_id = f'{robot_id}/odom' 
+        t.header.frame_id = f'{robot_id}/odom'
         t.child_frame_id = f'{robot_id}/base_link'
         
         t.transform.translation.x = msg.pose.pose.position.x
@@ -128,7 +133,6 @@ class OverwatchBridge(Node):
         
         self.tf_broadcaster.sendTransform(t)
 
-        # FIX: Also update the Odometry message frame IDs so Nav2 listens to the right one
         msg.header.frame_id = f'{robot_id}/odom'
         msg.child_frame_id = f'{robot_id}/base_link'
         self.odom_pubs[robot_id].publish(msg)
@@ -180,3 +184,6 @@ def main(args=None):
     rclpy.spin(bridge)
     bridge.destroy_node()
     rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()

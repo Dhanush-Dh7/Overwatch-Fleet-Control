@@ -5,6 +5,7 @@ from launch_ros.actions import Node
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
+from launch.actions import TimerAction
 
 ROBOTS = ["indra", "vayu", "trishul", "agni", "rudra"]
 START_POSITIONS = {
@@ -38,6 +39,7 @@ def generate_launch_description():
         package='ros_gz_bridge',
         executable='parameter_bridge',
         arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
+        parameters=[{'use_sim_time': True}],
         output='screen'
     )
     ld.add_action(clock_bridge)
@@ -45,14 +47,14 @@ def generate_launch_description():
     for robot in ROBOTS:
         x, y = START_POSITIONS[robot]
         
-        sdf_file = PathJoinSubstitution([overwatch_pkg, 'models', 'overwatch_agent.urdf'])
+        URDF_FILE = '/app/src/overwatch_fleet/models/overwatch_agent.urdf'
         
         ld.add_action(Node(
             package='ros_gz_sim', 
             executable='create',
             arguments=[
                 '-name', robot,
-                '-file', sdf_file,
+                '-file', URDF_FILE,
                 '-x', str(x), 
                 '-y', str(y),
                 '-z', '0.1' 
@@ -60,18 +62,23 @@ def generate_launch_description():
             output='screen'
         ))
         
-        ld.add_action(IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                PathJoinSubstitution([FindPackageShare('nav2_bringup'), 'launch', 'bringup_launch.py'])
-            ),
-            launch_arguments={
-                'namespace': robot,
-                'use_namespace': 'True',
-                'use_sim_time': 'True',
-                'params_file': PathJoinSubstitution([FindPackageShare('nav2_bringup'), 'params', 'nav2_params.yaml']),
-                'autostart': 'True',
-                'map': PathJoinSubstitution([overwatch_pkg, 'maps', 'factory_map.yaml'])
-            }.items()
+        ld.add_action(TimerAction(
+            period=5.0, 
+            actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(
+                        PathJoinSubstitution([FindPackageShare('nav2_bringup'), 'launch', 'bringup_launch.py'])
+                    ),
+                    launch_arguments={
+                        'namespace': robot,
+                        'use_namespace': 'True',
+                        'use_sim_time': 'True',
+                        'params_file': PathJoinSubstitution([FindPackageShare('nav2_bringup'), 'params', 'nav2_params.yaml']),
+                        'autostart': 'True',
+                        'map': PathJoinSubstitution([FindPackageShare('overwatch_fleet'), 'maps', 'factory_map.yaml'])
+                    }.items()
+                )
+            ]
         ))
         
         ld.add_action(Node(
