@@ -1,4 +1,3 @@
-from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 import rclpy
@@ -8,6 +7,7 @@ from overwatch_fleet.simulation import VirtualFleet
 from overwatch_interfaces.srv import GetRobotStatus
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
+from tf2_msgs.msg import TFMessage
 
 def sync_robot_states(fleet_manager):
     if not rclpy.ok():
@@ -74,33 +74,34 @@ class OverwatchBridge(Node):
             name: ActionClient(self, NavigateToPose, f'/{name.lower()}/navigate_to_pose')
             for name in self.fleet.robots
         }
-
+        self.active_goals = {}
         # --- THE ODOM INTERCEPTOR ---
-        self.tf_broadcaster = TransformBroadcaster(self)
         self.odom_subs = []
         self.odom_pubs = {}
+        self.tf_pubs = {}
         
         # Explicitly define the robots so subscriptions generate properly
         robots = ["indra", "vayu", "trishul", "agni", "rudra"]
         
         for robot_id in robots:
-            # Publisher for the clean data Nav2 will read
             self.odom_pubs[robot_id] = self.create_publisher(Odometry, f'/{robot_id}/odom', 10)
-            
-            # Subscriber reading the raw data from Gazebo
+            self.tf_pubs[robot_id] = self.create_publisher(TFMessage, f'/{robot_id}/tf', 10)  # <-- new
             sub = self.create_subscription(
-                Odometry,
-                f'/{robot_id}/odom_raw',
+                Odometry, f'/{robot_id}/odom_raw',
                 lambda msg, rid=robot_id: self.odom_callback(msg, rid),
                 10
             )
             self.odom_subs.append(sub)
-        
+            
     def dispatch_to_location(self, robot_name: str, target_loc: str):
-        # (Keep your existing dispatch_to_location code here)
         client = self.nav_clients.get(robot_name)
-        if not client or not client.wait_for_server(timeout_sec=2.0):
+        if not client:
+            self.get_logger().error(f"No action client found for {robot_name}!")
             return
+        if not client.wait_for_server(timeout_sec=2.0):
+            self.get_logger().error(f"Nav2 Action Server for '{robot_name}' is NOT READY! Command dropped.")
+            return
+            
         x, y = self.ZONE_COORDS.get(target_loc, (0.0, 0.0))
         goal = NavigateToPose.Goal()
         goal.pose.header.frame_id = 'map'
@@ -108,30 +109,42 @@ class OverwatchBridge(Node):
         goal.pose.pose.position.x = float(x)
         goal.pose.pose.position.y = float(y)
         goal.pose.pose.orientation.w = 1.0
+        
         self.fleet.robots[robot_name]['status'] = 'En Route'
-        client.send_goal_async(
+        
+        # Protect future, attach a result listener
+        future = client.send_goal_async(
             goal,
             feedback_callback=lambda fb: self._nav_feedback(robot_name, fb)
         )
+        self.active_goals[robot_name] = future 
+        future.add_done_callback(lambda f, r=robot_name: self._goal_response_callback(f, r))
+        
+    def _goal_response_callback(self, future, robot_name):
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().error(f"❌ Goal for {robot_name} was REJECTED by Nav2.")
+            return
+        self.get_logger().info(f"✅ Goal for {robot_name} ACCEPTED! Moving...")
         
     def _nav_feedback(self, robot_name, feedback):
         self.fleet.robots[robot_name]['status'] = 'En Route'
 
     def odom_callback(self, msg, robot_id):
         # Print a message so we know the data is actually flowing
-        self.get_logger().info(f"Processing odometry for {robot_id}")
+        # self.get_logger().info(f"Processing odometry for {robot_id}")
         
         t = TransformStamped()
         t.header.stamp = msg.header.stamp 
-        t.header.frame_id = f'{robot_id}/odom'
-        t.child_frame_id = f'{robot_id}/base_link'
+        t.header.frame_id = 'odom'        # bare, matches nav2_params.yaml
+        t.child_frame_id = 'base_link'       
         
         t.transform.translation.x = msg.pose.pose.position.x
         t.transform.translation.y = msg.pose.pose.position.y
         t.transform.translation.z = msg.pose.pose.position.z
         t.transform.rotation = msg.pose.pose.orientation
         
-        self.tf_broadcaster.sendTransform(t)
+        self.tf_pubs[robot_id].publish(TFMessage(transforms=[t]))
 
         msg.header.frame_id = f'{robot_id}/odom'
         msg.child_frame_id = f'{robot_id}/base_link'

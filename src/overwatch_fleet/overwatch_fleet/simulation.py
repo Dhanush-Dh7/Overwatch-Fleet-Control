@@ -16,11 +16,11 @@ class VirtualFleet:
     def __init__(self):
         # 3 Support (general), 2 Disaster Management — no repair bot
         self.robots = {
-            "Indra":  {"location": "Assembly-A",     "battery": 85, "status": "Idle", "health": "Operational", "mission": None, "type": "Support",       "charging": False},
-            "Vayu":   {"location": "Storage-Bay",    "battery": 72, "status": "Idle", "health": "Operational", "mission": None, "type": "Support",       "charging": False},
-            "Trishul":{"location": "Assembly-B",     "battery": 60, "status": "Idle", "health": "Operational", "mission": None, "type": "Support",       "charging": False},
+            # "Indra":  {"location": "Assembly-A",     "battery": 85, "status": "Idle", "health": "Operational", "mission": None, "type": "Support",       "charging": False},
+            # "Vayu":   {"location": "Storage-Bay",    "battery": 72, "status": "Idle", "health": "Operational", "mission": None, "type": "Support",       "charging": False},
+            # "Trishul":{"location": "Assembly-B",     "battery": 60, "status": "Idle", "health": "Operational", "mission": None, "type": "Support",       "charging": False},
             "Agni":   {"location": "Loading-Dock",   "battery": 90, "status": "Idle", "health": "Operational", "mission": None, "type": "Disaster Mgmt", "charging": False},
-            "Rudra":  {"location": "Processing-Unit","battery": 55, "status": "Idle", "health": "Operational", "mission": None, "type": "Disaster Mgmt", "charging": False},
+            # "Rudra":  {"location": "Processing-Unit","battery": 55, "status": "Idle", "health": "Operational", "mission": None, "type": "Disaster Mgmt", "charging": False},
         }
         self.hazards = []
         self.mission_ledger = []
