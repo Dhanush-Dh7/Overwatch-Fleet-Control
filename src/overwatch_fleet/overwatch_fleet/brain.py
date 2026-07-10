@@ -4,6 +4,7 @@ import json
 import threading
 import queue
 import rclpy
+import subprocess
 from std_msgs.msg import String
 from rclpy.node import Node
 from datetime import datetime
@@ -33,11 +34,12 @@ class FleetCommandNode(Node):
 if not rclpy.ok():
     rclpy.init()
 
-if 'fleet_cmd_node' not in globals():
-    fleet_cmd_node = FleetCommandNode()
-
 def send_ros_command(robot_name, target_loc):
-    fleet_cmd_node.send_nav_command(robot_name, target_loc)
+    """Bypasses Streamlit script refresh drops by pushing commands via system shell"""
+    cmd = f'ros2 topic pub --once /fleet_command std_msgs/msg/String "{{data: \'Navigate:{robot_name}:{target_loc}\'}}"'
+    subprocess.Popen(cmd, shell=True)
+    print(f"🚀 Streamlit fired system command: {cmd}")
+
 
 class AgentState(TypedDict):
     messages: List[BaseMessage]

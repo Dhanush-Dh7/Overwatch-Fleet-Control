@@ -5,8 +5,13 @@ from launch_ros.actions import Node
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
+from launch.actions import TimerAction
+from launch.actions import GroupAction
+from launch_ros.actions import PushROSNamespace
 
-ROBOTS = ["indra", "vayu", "trishul", "agni", "rudra"]
+
+# ROBOTS = ["indra", "vayu", "trishul", "agni", "rudra"]
+ROBOTS = ["agni"]
 START_POSITIONS = {
     "indra":   ( 2.0,  3.0),
     "vayu":    (-2.0,  3.0),
@@ -38,55 +43,76 @@ def generate_launch_description():
         package='ros_gz_bridge',
         executable='parameter_bridge',
         arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
+        parameters=[{'use_sim_time': True}],
         output='screen'
     )
     ld.add_action(clock_bridge)
 
     for robot in ROBOTS:
         x, y = START_POSITIONS[robot]
-        
-        sdf_file = PathJoinSubstitution([overwatch_pkg, 'models', 'overwatch_agent.urdf'])
-        
+        URDF_FILE = '/app/src/overwatch_fleet/models/overwatch_agent.urdf'
+
         ld.add_action(Node(
-            package='ros_gz_sim', 
-            executable='create',
-            arguments=[
-                '-name', robot,
-                '-file', sdf_file,
-                '-x', str(x), 
-                '-y', str(y),
-                '-z', '0.1' 
-            ],
-            output='screen'
-        ))
-        
-        ld.add_action(IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                PathJoinSubstitution([FindPackageShare('nav2_bringup'), 'launch', 'bringup_launch.py'])
-            ),
-            launch_arguments={
-                'namespace': robot,
-                'use_namespace': 'True',
-                'use_sim_time': 'True',
-                'params_file': PathJoinSubstitution([FindPackageShare('nav2_bringup'), 'params', 'nav2_params.yaml']),
-                'autostart': 'True',
-                'map': PathJoinSubstitution([overwatch_pkg, 'maps', 'factory_map.yaml'])
-            }.items()
-        ))
-        
-        ld.add_action(Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name=f'map_to_{robot}_odom',
-            # This explicitly anchors each unique robot to the global map origin
-            arguments=[str(x), str(y), '0', '0', '0', '0', 'map', f'{robot}/odom'],
-            parameters=[{'use_sim_time': True}],
+            package='ros_gz_sim', executable='create',
+            arguments=['-name', robot, '-file', URDF_FILE, '-x', str(x), '-y', str(y), '-z', '0.1'],
             output='screen'
         ))
 
+        ld.add_action(TimerAction(
+            period=5.0,
+            actions=[
+                GroupAction(actions=[
+                    PushROSNamespace(robot),
+
+                    # Nav2 stack
+                    IncludeLaunchDescription(
+                        PythonLaunchDescriptionSource(
+                            PathJoinSubstitution([FindPackageShare('nav2_bringup'), 'launch', 'navigation_launch.py'])
+                        ),
+                        launch_arguments={
+                            'namespace': robot,
+                            'use_sim_time': 'True',
+                            'params_file': os.path.join('/app/src/overwatch_fleet/config', 'nav2_params.yaml'),
+                            'autostart': 'True',
+                            'use_composition': 'False',
+                        }.items()
+                    ),
+
+                    # map -> odom
+                    Node(
+                        package='tf2_ros', executable='static_transform_publisher',
+                        name=f'map_to_{robot}_odom',
+                        arguments=[
+                            '--x', str(x), '--y', str(y), '--z', '0',
+                            '--qx', '0', '--qy', '0', '--qz', '0', '--qw', '1',
+                            '--frame-id', 'map', '--child-frame-id', 'odom'
+                        ],
+                        parameters=[{'use_sim_time': True}],
+                        remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
+                        output='screen'
+                    ),
+
+                    # base_link -> lidar_link
+                    Node(
+                        package='tf2_ros', executable='static_transform_publisher',
+                        name='static_tf_lidar_' + robot,
+                        arguments=[
+                            '--x', '0', '--y', '0', '--z', '0',
+                            '--qx', '0', '--qy', '0', '--qz', '0', '--qw', '1',
+                            '--frame-id', 'base_link', '--child-frame-id', f'{robot}/lidar_link/lidar'
+                        ],
+                        parameters=[{'use_sim_time': True}],
+                        remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
+                        output='screen'
+                    ),
+                ])
+            ]
+        ))
+    
         robot_bridge = Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',
+            name=f'bridge_{robot}',
             arguments=[
                 f'/world/factory/model/{robot}/link/lidar_link/sensor/lidar/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
                 f'/model/{robot}/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry',
@@ -100,34 +126,30 @@ def generate_launch_description():
             ],
             output='screen'
         )
-        ld.add_action(robot_bridge)
-
-        ld.add_action(Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='static_tf_lidar_' + robot,
-            arguments=['0', '0', '0', '0', '0', '0', f'{robot}/base_link', f'{robot}/lidar_link/lidar'],
-            parameters=[{'use_sim_time': True}],
-            output='screen'
-        ))
-       
+    ld.add_action(robot_bridge)
+    
     ld.add_action(Node(
-        package='nav2_map_server',
-        executable='map_server',
-        name='map_server',
-        output='screen',
-        parameters=[{
-            'yaml_filename': PathJoinSubstitution([FindPackageShare('overwatch_fleet'), 'maps', 'factory_map.yaml']),
-            'use_sim_time': True
-        }]
-    ))
+    package='nav2_map_server',
+    executable='map_server',
+    name='map_server',
+    output='screen',
+    parameters=[{
+        'yaml_filename': PathJoinSubstitution([FindPackageShare('overwatch_fleet'), 'maps', 'factory_map.yaml']),
+        'use_sim_time': True
+    }]
+))
 
     ld.add_action(Node(
         package='nav2_lifecycle_manager',
         executable='lifecycle_manager',
         name='lifecycle_manager_map',
         output='screen',
-        parameters=[{'autostart': True, 'node_names': ['map_server']}]
+        parameters=[{
+            'autostart': True,
+            'node_names': [
+                'map_server'
+            ]
+        }]
     ))    
         
     ld.add_action(Node(

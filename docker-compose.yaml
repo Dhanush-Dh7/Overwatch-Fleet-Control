@@ -1,8 +1,11 @@
 services:
   overwatch:
     image: overwatch # The image you built
+    build: .
     shm_size: '1gb'
     container_name: overwatch-container
+    environment:
+      - ROS_DOMAIN_ID=42
     ports:
       - "8765:8765" # This makes the bridge accessible from the host
       - "8501:8501" # Keep your Streamlit port mapped too

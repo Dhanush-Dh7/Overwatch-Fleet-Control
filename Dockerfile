@@ -17,8 +17,9 @@ RUN apt-get update && apt-get install -y \
     # Headless display for Gazebo in Docker
     xvfb \
     mesa-utils \
-    && rm -rf /var/lib/apt/lists/*
-
+    # foxbridge
+    ros-jazzy-foxglove-bridge 
+    
 ENV TURTLEBOT3_MODEL=burger
 # Headless display
 ENV DISPLAY=:99
