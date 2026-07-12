@@ -1,7 +1,7 @@
 # Overwatch: Fleet Control
 
 <p align="center">
-  <img src="path/to/your/demo.gif" alt="Overwatch Fleet Demo" width="700"/>
+  <img width="800" height="416" alt="Overwatch fleet demo" src="https://github.com/user-attachments/assets/e7aba070-a0de-4e49-9204-7ec98ebbe8a0" />
 </p>
 
 Overwatch: Fleet Control is an advanced orchestration system designed to transition industrial automation from rigid, scripted processes to intelligent, autonomous agentic workflows. By integrating a "Strategist Node" powered by Gemini 2.0 Flash, the system enables dynamic task assignment, real-time emergency response, and proactive fleet maintenance.
