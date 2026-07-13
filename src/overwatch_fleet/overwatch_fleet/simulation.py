@@ -13,7 +13,8 @@ FULL_BATTERY_THRESHOLD = 90
 
 
 class VirtualFleet:
-    def __init__(self):
+    def __init__(self,on_relocate=None):
+        self.on_relocate = on_relocate  # callback: (name, location) -> None
         # 3 Support (general), 2 Disaster Management — no repair bot
         self.robots = {
             # "Indra":  {"location": "Assembly-A",     "battery": 85, "status": "Idle", "health": "Operational", "mission": None, "type": "Support",       "charging": False},
@@ -117,6 +118,8 @@ class VirtualFleet:
                         unit["status"] = f"Charging ({unit['battery']}%)"
                         unit["charging"] = True
                         self._log_event(f"{name} battery low ({unit['battery']}%), routing to Charging-Bay")
+                        if self.on_relocate:
+                            self.on_relocate(name, unit["location"])
                     continue
 
                 current = unit["location"]
@@ -128,6 +131,8 @@ class VirtualFleet:
                     unit["location"] = new_loc
                     unit["status"] = "Patrolling"
                     self._log_event(f"{name} patrolling: {current} → {new_loc} (battery {unit['battery']}%)")
+                    if self.on_relocate:
+                        self.on_relocate(name, new_loc)
                     if random.random() < 0.03:
                         unit["health"] = "Maintenance Required"
                         unit["status"] = "Offline"

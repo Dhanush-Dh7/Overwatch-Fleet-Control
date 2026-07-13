@@ -1,27 +1,19 @@
 #!/bin/bash
+
+# Exit immediately if any command returns a error status
+set -e
+
+# Source the ROS 2 environment setup files
 source /opt/ros/jazzy/setup.bash
 source /app/install/setup.bash
 
-# Start virtual display for Gazebo Harmonic headless
+# 1. Start a virtual frame buffer (Xvfb) for headless Gazebo rendering
+echo "Initializing virtual display buffer (Xvfb)..."
 Xvfb :99 -screen 0 1024x768x24 &
 export DISPLAY=:99
 export LIBGL_ALWAYS_SOFTWARE=1
 
-# Streamlit in background
-nohup streamlit run src/overwatch_fleet/overwatch_fleet/app.py \
-    --server.port=8501 \
-    --server.address=0.0.0.0 \
-    --server.headless=true \
-    --server.enableCORS=false \
-    --server.enableXsrfProtection=false > app.log 2>&1 &
-
-# Gazebo Harmonic (gz sim, not gazebo)
-nohup gz sim worlds/factory.sdf --headless-rendering -s > gz.log 2>&1 &
-
-# ROS-Gazebo bridge
-nohup ros2 run ros_gz_bridge parameter_bridge \
-    /clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock \
-    > bridge.log 2>&1 &
-
-# Your overwatch bridge node
-ros2 run overwatch_fleet bridge_node
+# 2. Hand over total control to your master ROS 2 launch file
+# This fires Streamlit, Gazebo, your bridge nodes, and Nav2 out of the box!
+echo "Spinning up full Overwatch framework via factory_sim.launch.py..."
+ros2 launch overwatch_fleet factory_sim.launch.py
