@@ -268,25 +268,26 @@ with st.sidebar:
 
         st.divider()
 
-        for name, stats in fleet_manager.robots.items():
-            charge_tag = " ⚡" if stats['charging'] else ""
-            badge = type_badge(stats['type'])
+        @st.fragment(run_every=2)
+        def render_robot_status():
+            for name, stats in fleet_manager.robots.items():
+                charge_tag = " ⚡" if stats['charging'] else ""
+                badge = type_badge(stats['type'])
 
-            st.markdown(f"**{health_color(stats['health'])} {name}** {badge} `{stats['type']}`{charge_tag}")
+                st.markdown(f"**{health_color(stats['health'])} {name}** {badge} `{stats['type']}`{charge_tag}")
+                st.progress(stats['battery'] / 100, text=f"{battery_icon(stats['battery'])} {stats['battery']}%")
 
-            st.progress(stats['battery'] / 100, text=f"{battery_icon(stats['battery'])} {stats['battery']}%")
+                mb = fleet_manager.mission_board.get(name, {})
+                if mb.get('status') == 'ongoing':
+                    display_status = '🚀 En Route' if mb.get('enroute') else '⚙️ Executing Mission'
+                else:
+                    display_status = stats['status']
 
-            # Derive status from mission board so it stays in sync with the board display
-            mb = fleet_manager.mission_board.get(name, {})
-            if mb.get('status') == 'ongoing':
-                display_status = '🚀 En Route' if mb.get('enroute') else '⚙️ Executing Mission'
-            else:
-                display_status = stats['status']
-
-            st.caption(f"📍 {stats['location']} | {display_status}")
-            if stats.get('mission'):
-                st.caption(f"🎯 {stats['mission'][:45]}")
-            st.divider()
+                st.caption(f"📍 {stats['location']} | {display_status}")
+                if stats.get('mission'):
+                    st.caption(f"🎯 {stats['mission'][:45]}")
+                st.divider()
+        render_robot_status()
             
 
     with tab_map:

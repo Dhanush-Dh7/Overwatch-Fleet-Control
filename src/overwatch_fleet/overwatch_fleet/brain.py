@@ -17,8 +17,6 @@ from langgraph.graph import StateGraph, END
 from simulation import VirtualFleet, PATROL_LOCATIONS, ALL_LOCATIONS
 
 load_dotenv()
-fleet_manager = VirtualFleet()
-fleet_manager.start_simulation()
 
 class FleetCommandNode(Node):
     def __init__(self):
@@ -40,6 +38,8 @@ def send_ros_command(robot_name, target_loc):
     subprocess.Popen(cmd, shell=True)
     print(f"🚀 Streamlit fired system command: {cmd}")
 
+fleet_manager = VirtualFleet(on_relocate=send_ros_command)
+fleet_manager.start_simulation()
 
 class AgentState(TypedDict):
     messages: List[BaseMessage]
@@ -323,8 +323,16 @@ INSTRUCTIONS:
         if not decision or "robot" not in decision:
             raise ValueError(f"Could not parse JSON: {raw[:200]}")
     except Exception as e:
-        fallback = _effective_robot or _best_available_robot()
-        decision = {"robot": fallback, "action": "General inspection", "reasoning": str(e)[:80]}
+        err_str = str(e)
+        if "429" in err_str or "quota" in err_str.lower() or "rate" in err_str.lower():
+            decision = {
+                "robot": _effective_robot or _best_available_robot(),
+                "action": "Standing by — API rate limit reached, try again shortly",
+                "reasoning": "rate_limited"
+            }
+        else:
+            fallback = _effective_robot or _best_available_robot()
+            decision = {"robot": fallback, "action": "General inspection", "reasoning": str(e)[:80]}
 
     chosen = decision.get("robot", "Indra")
     if chosen in fleet_data and fleet_data[chosen]["battery"] < 25:
@@ -422,30 +430,9 @@ def generate_completion_report(robot: str, task: str, is_chaos: bool = False) ->
     unit = fleet_manager.robots.get(robot, {})
     location = unit.get("location", "unknown location")
     battery = unit.get("battery", 0)
-    rtype = unit.get("type", "Unit")
-
-    prompt = f"""You are the Overwatch AI for a factory sending a task completion report.
-
-UNIT: {robot} ({rtype})
-TASK COMPLETED: {task}
-CURRENT LOCATION: {location}
-BATTERY REMAINING: {battery}%
-TASK TYPE: {"Emergency Response" if is_chaos else "Standard Task"}
-
-Write a 2-3 sentence completion report:
-1. Confirm the task is done and how it was handled
-2. State the unit's current condition and location
-3. {"Confirm the situation is contained and area is safe." if is_chaos else "State the unit is returning to standby."}
-
-Professional factory ops tone. Be concise."""
-
-    try:
-        report = get_llm().invoke(prompt).content.strip()
-    except Exception:
-        report = f"{robot} completed: {task}. Now at {location} with {battery}% battery."
-
-    return report
-
+    if is_chaos:
+        return f"{robot} has contained the situation at {location}. Battery at {battery}%. Area secured, standing by for next order."
+    return f"{robot} completed '{task}' and is now at {location} with {battery}% battery. Returning to standby."
 
 # ── Feature: Post-incident executive summary ────────────────────────────────
 
