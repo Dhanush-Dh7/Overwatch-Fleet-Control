@@ -24,14 +24,11 @@ ENV TURTLEBOT3_MODEL=burger
 # Headless display
 ENV DISPLAY=:99
 ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r requirements.txt
 COPY . .
 
-CMD ["/bin/bash", "-c", \
-    "Xvfb :99 -screen 0 1024x768x24 & \
-     source /opt/ros/jazzy/setup.bash && \
-     streamlit run src/overwatch_fleet/overwatch_fleet/app.py \
-     --server.port=8501 --server.address=0.0.0.0"]
+CMD ["/bin/bash", "-c", "sleep infinity"]

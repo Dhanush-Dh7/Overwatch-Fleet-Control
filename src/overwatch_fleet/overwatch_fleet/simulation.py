@@ -89,9 +89,16 @@ class VirtualFleet:
 
     def simulation_tick(self):
         with self._lock:
+            POST_MISSION_COOLDOWN = 3.0
             for name, unit in self.robots.items():
                 if unit["health"] == "Malfunction" or unit["status"] == "Offline":
                     continue
+                if unit["health"] != "Operational":
+                    continue
+                if time.time() - unit.get("_completed_at", 0) < POST_MISSION_COOLDOWN:
+                    continue
+                if unit.get("moving"):
+                    continue   # already navigating somewhere — wait for arrival
 
                 if unit["charging"]:
                     gain = random.randint(15, 25)
@@ -114,12 +121,13 @@ class VirtualFleet:
 
                 if unit["battery"] < LOW_BATTERY_THRESHOLD:
                     if unit["location"] != CHARGING_BAY:
-                        unit["location"] = CHARGING_BAY
-                        unit["status"] = f"Charging ({unit['battery']}%)"
-                        unit["charging"] = True
+                        unit["status"] = "En Route to Charging-Bay"
+                        unit["moving"] = True
+                        unit["_nav_kind"] = "charge"
+                        unit["_nav_target"] = CHARGING_BAY
                         self._log_event(f"{name} battery low ({unit['battery']}%), routing to Charging-Bay")
                         if self.on_relocate:
-                            self.on_relocate(name, unit["location"])
+                            self.on_relocate(name, CHARGING_BAY)
                     continue
 
                 current = unit["location"]
@@ -128,8 +136,10 @@ class VirtualFleet:
                     new_loc = random.choice(options)
                     drain = random.randint(3, 8)
                     unit["battery"] = max(0, unit["battery"] - drain)
-                    unit["location"] = new_loc
                     unit["status"] = "Patrolling"
+                    unit["moving"] = True
+                    unit["_nav_kind"] = "patrol"
+                    unit["_nav_target"] = new_loc
                     self._log_event(f"{name} patrolling: {current} → {new_loc} (battery {unit['battery']}%)")
                     if self.on_relocate:
                         self.on_relocate(name, new_loc)
@@ -137,7 +147,7 @@ class VirtualFleet:
                         unit["health"] = "Maintenance Required"
                         unit["status"] = "Offline"
                         self._log_event(f"ALERT: {name} went offline at {new_loc}")
-
+                        
     # ── Fleet helpers ──────────────────────────────────────────────────────
 
     def get_robot_data(self, name):
@@ -147,7 +157,7 @@ class VirtualFleet:
         total = len(self.robots)
         operational = sum(1 for r in self.robots.values() if r["health"] == "Operational")
         avg_battery = sum(r["battery"] for r in self.robots.values()) // total
-        on_mission = sum(1 for r in self.robots.values() if r["status"] == "Executing Mission")
+        on_mission = sum(1 for r in self.robots.values() if r["status"] in ("Executing Mission", "En Route"))
         charging = sum(1 for r in self.robots.values() if r["charging"])
         return {
             "total": total,
@@ -218,6 +228,7 @@ class VirtualFleet:
         prev_task = unit.get("mission", "unknown task")
         self.robots[name]["mission"] = None
         self.robots[name]["status"] = "Idle"
+        self.robots[name]["_completed_at"] = time.time()
         if name in self.mission_board:
             self.mission_board[name]["enroute"] = False
         self.mission_counts[name] = self.mission_counts.get(name, 0) + 1
@@ -274,6 +285,7 @@ class VirtualFleet:
 
     def _log_event(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[SIM {ts}] {msg}")
         self.event_log.append({"time": ts, "event": msg})
         if len(self.event_log) > 200:
             self.event_log = self.event_log[-200:]

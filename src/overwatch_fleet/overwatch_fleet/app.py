@@ -10,6 +10,7 @@ from brain import (
 )
 from langchain_core.messages import HumanMessage, AIMessage
 from dotenv import load_dotenv
+from datetime import datetime
 load_dotenv()
 
 
@@ -211,8 +212,6 @@ with st.sidebar:
         event, response_loc = fleet_manager.trigger_chaos_event()
         report, dispatched = handle_chaos_event(event, response_loc)
         #st.session_state.chat_history.append(AIMessage(content=report))
-        for robot in dispatched:
-            schedule_completion(robot, f"Emergency response: {event}", is_chaos=True, delay=7.0)
         st.rerun()
 
     if col_b.button("🔋 Recharge All", use_container_width=True):
@@ -250,16 +249,17 @@ with st.sidebar:
 
 
     with tab_vitals:
-        
-        summary = fleet_manager.get_fleet_summary()
-        c1, c2 = st.columns(2)
-        c1.metric("Units", f"{summary['operational']}/{summary['total']}")
-        c2.metric("Avg Battery", f"{summary['avg_battery']}%")
-        m1, m2 = st.columns(2)
-        m1.metric("On Mission", summary['on_mission'])
-        m2.metric("Charging", summary['charging'])
+        @st.fragment(run_every=2)
+        def render_summary():
+            summary = fleet_manager.get_fleet_summary()
+            c1, c2 = st.columns(2)
+            c1.metric("Units", f"{summary['operational']}/{summary['total']}")
+            c2.metric("Avg Battery", f"{summary['avg_battery']}%")
+            m1, m2 = st.columns(2)
+            m1.metric("On Mission", summary['on_mission'])
+            m2.metric("Charging", summary['charging'])
+        render_summary()
 
-        # Feature 3: Robot utilization chart
         counts = fleet_manager.mission_counts
         if any(v > 0 for v in counts.values()):
             st.divider()
@@ -267,9 +267,10 @@ with st.sidebar:
             st.bar_chart(counts)
 
         st.divider()
-
+        
         @st.fragment(run_every=2)
         def render_robot_status():
+            st.caption(f"🕐 last refresh: {datetime.now().strftime('%H:%M:%S')}")
             for name, stats in fleet_manager.robots.items():
                 charge_tag = " ⚡" if stats['charging'] else ""
                 badge = type_badge(stats['type'])
@@ -292,22 +293,27 @@ with st.sidebar:
 
     with tab_map:
         from simulation import ALL_LOCATIONS
-        loc_map = defaultdict(list)
-        for name, stats in fleet_manager.robots.items():
-            label = f"{health_color(stats['health'])} {name}"
-            if stats['charging']:
-                label += " ⚡"
-            loc_map[stats['location']].append(label)
-        for loc in ALL_LOCATIONS:
-            robots_here = loc_map.get(loc, [])
-            count = len(robots_here)
-            header = f"📍 {loc} ({count})" if count else f"◻️ {loc} — empty"
-            with st.expander(header, expanded=count > 0):
-                if robots_here:
-                    for r in robots_here:
-                        st.write(r)
-                else:
-                    st.caption("No units present")
+
+        @st.fragment(run_every=2)
+        def render_map():
+            loc_map = defaultdict(list)
+            for name, stats in fleet_manager.robots.items():
+                label = f"{health_color(stats['health'])} {name}"
+                if stats['charging']:
+                    label += " ⚡"
+                loc_map[stats['location']].append(label)
+            for loc in ALL_LOCATIONS:
+                robots_here = loc_map.get(loc, [])
+                count = len(robots_here)
+                header = f"📍 {loc} ({count})" if count else f"◻️ {loc} — empty"
+                with st.expander(header, expanded=count > 0):
+                    if robots_here:
+                        for r in robots_here:
+                            st.write(r)
+                    else:
+                        st.caption("No units present")
+
+        render_map()
 
     with tab_log:
         events = fleet_manager.event_log[::-1]
@@ -347,7 +353,6 @@ with chat_container:
 
 render_mission_board()
 
-
 # ── Pending approval ───────────────────────────────────────────────────────
 if st.session_state.pending_action:
     action = st.session_state.pending_action
@@ -361,17 +366,8 @@ if st.session_state.pending_action:
 
     c1, c2 = st.columns(2)
     if c1.button("✅ Authorize Mission", use_container_width=True):
-        from simulation import ALL_LOCATIONS
-        target_loc = next(
-            (loc for loc in ALL_LOCATIONS if loc.lower() in task_action.lower()), None
-        )
-        if target_loc:
-            fleet_manager.set_location(robot, target_loc)
-            send_ros_command(robot, target_loc)
-            
-        res = fleet_manager.assign_mission(robot, task_action)
-        st.session_state.chat_history.append(AIMessage(content=res))
         schedule_completion(robot, task_action, is_chaos=False, delay=7.0)
+        st.session_state.chat_history.append(AIMessage(content=f"Dispatching {robot}: {task_action}"))
         st.session_state.pending_action = None
         st.rerun()
     if c2.button("❌ Abort", use_container_width=True):
@@ -394,21 +390,16 @@ if user_text:
         for plan in multi_plans:
             robot = plan["robot"]
             task = plan["task"]
-            res = fleet_manager.assign_mission(robot, task)
-            if "confirmed" in res.lower() or "protocol" in res.lower():
-                schedule_completion(robot, task, is_chaos=False, delay=5.0)
-                dispatched_lines.append(f"- **{robot}** → {task}")
-            else:
-                dispatched_lines.append(f"- **{robot}** → ⚠️ {res}")
+            schedule_completion(robot, task, is_chaos=False, delay=5.0)
+            dispatched_lines.append(f"- **{robot}** → {task}")
 
         ans = (
             f"🏭 **Factory-Wide Deployment Initiated** — {len(multi_plans)} units dispatched:\n\n"
             + "\n".join(dispatched_lines)
-            + "\n\nAll units are executing simultaneously. Completion reports will follow in ~5 seconds."
+            + "\n\nAll units are executing simultaneously. Completion reports will follow shortly."
         )
         st.session_state.chat_history.append(AIMessage(content=ans))
         st.rerun()
-
     else:
         # Standard single-dispatch flow
         initial_state = {
@@ -440,11 +431,7 @@ if user_text:
                     if msgs and isinstance(msgs[-1], AIMessage)
                     else "Mission status unclear."
                 )
-                if fleet_manager.mission_ledger:
-                    last = fleet_manager.mission_ledger[-1]
-                    if last["status"] == "Initiated":
-                        schedule_completion(last["unit"], last["task"], is_chaos=False, delay=5.0)
-
+                
             st.session_state.chat_history.append(AIMessage(content=ans))
 
         except Exception as e:
