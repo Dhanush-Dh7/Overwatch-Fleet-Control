@@ -8,6 +8,9 @@ from overwatch_interfaces.srv import GetRobotStatus
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from tf2_msgs.msg import TFMessage
+from visualization_msgs.msg import Marker, MarkerArray
+from rclpy.qos import QoSProfile, DurabilityPolicy
+
 
 def sync_robot_states(fleet_manager):
     if not rclpy.ok():
@@ -45,12 +48,11 @@ def sync_robot_states(fleet_manager):
 
 class OverwatchBridge(Node):
     def __init__(self, shared_fleet):
-        # CRITICAL FIX: Removed the invalid 'parameters' keyword argument. 
-        # The launch file already handles passing 'use_sim_time' to this node.
         super().__init__('overwatch_bridge')
         self.fleet = shared_fleet
         self.fleet.start_simulation()
-        
+        self.mission_complete_pub = self.create_publisher(String, '/mission_complete', 10)
+
         self.publisher = self.create_publisher(String, '/fleet_status', 10)
         self.timer = self.create_timer(1.0, self.timer_callback)
         self.get_logger().info("Overwatch Bridge is online and publishing to /fleet_status.")
@@ -70,28 +72,49 @@ class OverwatchBridge(Node):
             "Control-Room":    (-4.0, 0.0),
             "Dispatch-Zone":   (0.0,  0.0),
         }
+        qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.zone_label_pub = self.create_publisher(MarkerArray, '/zone_labels', qos)
+        self._publish_zone_labels()
+
         self.nav_clients = {
             name: ActionClient(self, NavigateToPose, f'/{name.lower()}/navigate_to_pose')
             for name in self.fleet.robots
         }
         self.active_goals = {}
-        # --- THE ODOM INTERCEPTOR ---
+        self.goal_generation = {} 
         self.odom_subs = []
         self.odom_pubs = {}
         self.tf_pubs = {}
-        
-        # Explicitly define the robots so subscriptions generate properly
+
         robots = ["indra", "vayu", "trishul", "agni", "rudra"]
-        
         for robot_id in robots:
             self.odom_pubs[robot_id] = self.create_publisher(Odometry, f'/{robot_id}/odom', 10)
-            self.tf_pubs[robot_id] = self.create_publisher(TFMessage, f'/{robot_id}/tf', 10)  # <-- new
+            self.tf_pubs[robot_id] = self.create_publisher(TFMessage, f'/{robot_id}/tf', 10)
             sub = self.create_subscription(
                 Odometry, f'/{robot_id}/odom_raw',
                 lambda msg, rid=robot_id: self.odom_callback(msg, rid),
                 10
             )
             self.odom_subs.append(sub)
+
+    def _publish_zone_labels(self):
+        arr = MarkerArray()
+        for i, (name, (x, y)) in enumerate(self.ZONE_COORDS.items()):
+            m = Marker()
+            m.header.frame_id = 'map'
+            m.header.stamp = self.get_clock().now().to_msg()
+            m.ns = 'zone_labels'
+            m.id = i
+            m.type = Marker.TEXT_VIEW_FACING
+            m.action = Marker.ADD
+            m.pose.position.x = x
+            m.pose.position.y = y
+            m.pose.position.z = 1.0
+            m.scale.z = 0.5
+            m.color.r = 1.0; m.color.g = 1.0; m.color.b = 1.0; m.color.a = 1.0
+            m.text = name
+            arr.markers.append(m)
+        self.zone_label_pub.publish(arr)
             
     def dispatch_to_location(self, robot_name: str, target_loc: str):
         client = self.nav_clients.get(robot_name)
@@ -101,31 +124,66 @@ class OverwatchBridge(Node):
         if not client.wait_for_server(timeout_sec=2.0):
             self.get_logger().error(f"Nav2 Action Server for '{robot_name}' is NOT READY! Command dropped.")
             return
-            
-        x, y = self.ZONE_COORDS.get(target_loc, (0.0, 0.0))
-        goal = NavigateToPose.Goal()
-        goal.pose.header.frame_id = 'map'
-        goal.pose.header.stamp = self.get_clock().now().to_msg()
-        goal.pose.pose.position.x = float(x)
-        goal.pose.pose.position.y = float(y)
-        goal.pose.pose.orientation.w = 1.0
+
+        # Claim this dispatch as the latest one for this robot immediately,
+        # before any cancellation/async work happens.
+        my_gen = self.goal_generation.get(robot_name, 0) + 1
+        self.goal_generation[robot_name] = my_gen
+
+        def _send_new_goal():
+            if self.goal_generation.get(robot_name) != my_gen:
+                return  # a newer dispatch call already superseded this one
+
+            x, y = self.ZONE_COORDS.get(target_loc, (0.0, 0.0))
+            goal = NavigateToPose.Goal()
+            goal.pose.header.frame_id = 'map'
+            goal.pose.header.stamp = self.get_clock().now().to_msg()
+            goal.pose.pose.position.x = float(x)
+            goal.pose.pose.position.y = float(y)
+            goal.pose.pose.orientation.w = 1.0
+
+            self.fleet.robots[robot_name]['status'] = 'En Route'
+            future = client.send_goal_async(
+                goal,
+                feedback_callback=lambda fb: self._nav_feedback(robot_name, fb)
+            )
+            self.active_goals[robot_name] = future
+            future.add_done_callback(lambda f, r=robot_name, g=my_gen: self._goal_response_callback(f, r, g))
+
+        existing = self.active_goals.get(robot_name)
+        if existing is not None and existing.done():
+            goal_handle = existing.result()
+            if goal_handle.accepted:
+                cancel_future = goal_handle.cancel_goal_async()
+                cancel_future.add_done_callback(lambda f: _send_new_goal())
+                return
+
+        _send_new_goal()
         
-        self.fleet.robots[robot_name]['status'] = 'En Route'
-        
-        # Protect future, attach a result listener
-        future = client.send_goal_async(
-            goal,
-            feedback_callback=lambda fb: self._nav_feedback(robot_name, fb)
-        )
-        self.active_goals[robot_name] = future 
-        future.add_done_callback(lambda f, r=robot_name: self._goal_response_callback(f, r))
-        
-    def _goal_response_callback(self, future, robot_name):
+    def _goal_response_callback(self, future, robot_name, gen):
+        if self.goal_generation.get(robot_name) != gen:
+            return  # a newer dispatch has already superseded this one
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().error(f"❌ Goal for {robot_name} was REJECTED by Nav2.")
+            msg = String(); msg.data = f"{robot_name}:REJECTED"
+            self.mission_complete_pub.publish(msg)
             return
         self.get_logger().info(f"✅ Goal for {robot_name} ACCEPTED! Moving...")
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(lambda f, r=robot_name, g=gen: self._goal_result_callback(f, r, g))
+
+    def _goal_result_callback(self, future, robot_name, gen):
+        from action_msgs.msg import GoalStatus
+        if self.goal_generation.get(robot_name) != gen:
+            return  # stale result — the current dispatch is already a later one
+        status = future.result().status
+        if status == GoalStatus.STATUS_CANCELED:
+            return
+        outcome = "SUCCEEDED" if status == GoalStatus.STATUS_SUCCEEDED else "FAILED"
+        msg = String(); msg.data = f"{robot_name}:{outcome}"
+        self.mission_complete_pub.publish(msg)
+        self.get_logger().info(f"🏁 Navigation result for {robot_name}: {outcome}")
         
     def _nav_feedback(self, robot_name, feedback):
         self.fleet.robots[robot_name]['status'] = 'En Route'

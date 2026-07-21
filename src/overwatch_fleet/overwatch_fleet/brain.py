@@ -1,5 +1,6 @@
 import os
 import re 
+import time
 import json
 import threading
 import queue
@@ -10,11 +11,11 @@ from rclpy.node import Node
 from datetime import datetime
 from typing import TypedDict, List, Optional, Tuple
 from dotenv import load_dotenv
+from simulation import VirtualFleet, PATROL_LOCATIONS, ALL_LOCATIONS, CHARGING_BAY
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import AIMessage, BaseMessage
 from langgraph.graph import StateGraph, END
-from simulation import VirtualFleet, PATROL_LOCATIONS, ALL_LOCATIONS
 
 load_dotenv()
 
@@ -28,18 +29,104 @@ class FleetCommandNode(Node):
         msg.data = f"Navigate:{robot}:{loc}"
         self.publisher_.publish(msg)
         self.get_logger().info(f"Published: {msg.data}")
-
 if not rclpy.ok():
     rclpy.init()
 
-def send_ros_command(robot_name, target_loc):
-    """Bypasses Streamlit script refresh drops by pushing commands via system shell"""
-    cmd = f'ros2 topic pub --once /fleet_command std_msgs/msg/String "{{data: \'Navigate:{robot_name}:{target_loc}\'}}"'
-    subprocess.Popen(cmd, shell=True)
-    print(f"🚀 Streamlit fired system command: {cmd}")
+_command_node = rclpy.create_node('fleet_command_publisher')
+_command_pub = _command_node.create_publisher(String, '/fleet_command', 10)
 
+def send_ros_command(robot_name, target_loc):
+    """Publishes directly through a persistent, already-connected ROS publisher —
+    no subprocess spawn, no per-call discovery wait, guaranteed call-order delivery."""
+    msg = String()
+    msg.data = f"Navigate:{robot_name}:{target_loc}"
+    _command_pub.publish(msg)
+    print(f"🚀 Published: {msg.data}")
+    
 fleet_manager = VirtualFleet(on_relocate=send_ros_command)
 fleet_manager.start_simulation()
+
+WORK_DURATION = 5.0        # brief "doing the task" phase after real arrival
+pending_missions = {}      # robot_name -> {"token", "report_holder", "task", "is_chaos"}
+
+class MissionCompleteListener(Node):
+    def __init__(self):
+        super().__init__('mission_complete_listener')
+        self.create_subscription(String, '/mission_complete', self._on_complete, 10)
+
+    def _on_complete(self, msg):
+        try:
+            robot_name, nav_status = msg.data.split(':', 1)
+        except ValueError:
+            return
+
+        unit = fleet_manager.robots.get(robot_name)
+        if unit is not None:
+            unit['moving'] = False
+            kind = unit.pop('_nav_kind', None)
+            target = unit.pop('_nav_target', None)
+            if nav_status == "SUCCEEDED" and target:
+                unit['location'] = target
+                if kind == "charge":
+                    unit['charging'] = True
+                    unit['status'] = f"Charging ({unit['battery']}%)"
+                elif kind == "patrol":
+                    unit['status'] = "Patrolling"
+            elif nav_status != "SUCCEEDED" and kind in ("patrol", "charge"):
+                # This branch was previously unreachable for auto-patrol/auto-charge —
+                # failures were silently swallowed, causing invisible retry loops.
+                fleet_manager._log_event(
+                    f"ALERT: {robot_name} auto-{kind} to {target or '?'} failed ({nav_status})"
+                )
+                unit['status'] = "Idle"
+                unit['_completed_at'] = time.time()  # brief cooldown before the next auto-retry
+
+        entry = pending_missions.pop(robot_name, None)
+        if entry is None:
+            return  # plain patrol/charge — already fully handled above
+
+        if nav_status != "SUCCEEDED":
+            if robot_name in fleet_manager.robots:
+                fleet_manager.robots[robot_name]['status'] = 'Navigation Failed'
+                fleet_manager.robots[robot_name]['mission'] = None
+            fleet_manager._log_event(f"ALERT: {robot_name} navigation did not complete ({nav_status})")
+            fleet_manager.complete_mission_board(
+                robot_name,
+                f"Mission interrupted ({nav_status}).",
+                token=entry["token"]
+            )
+            return
+
+        if robot_name in fleet_manager.robots:
+            fleet_manager.robots[robot_name]['status'] = 'Executing Mission'
+        if robot_name in fleet_manager.mission_board:
+            fleet_manager.mission_board[robot_name]['enroute'] = False
+
+        def _finish():
+            report = entry["report_holder"][0] or f"{robot_name} completed: {entry['task']}. Mission accomplished."
+            fleet_manager.complete_mission(robot_name)
+            fleet_manager.complete_mission_board(robot_name, report, token=entry["token"])
+
+        threading.Timer(WORK_DURATION, _finish).start()
+
+def _spin_listener():
+        consecutive_errors = 0
+        while True:
+            if not rclpy.ok():
+                print("MissionCompleteListener: rclpy is shutting down, stopping listener thread.")
+                return
+            try:
+                rclpy.spin(MissionCompleteListener())
+            except Exception as e:
+                consecutive_errors += 1
+                print(f"⚠️ MissionCompleteListener crashed ({consecutive_errors}): {e}")
+                if consecutive_errors >= 5:
+                    print("⚠️ Too many consecutive crashes — giving up on MissionCompleteListener. "
+                        "Mission status tracking is now broken until the app is restarted.")
+                    return
+                time.sleep(1)
+
+threading.Thread(target=_spin_listener, daemon=True).start()        
 
 class AgentState(TypedDict):
     messages: List[BaseMessage]
@@ -115,7 +202,6 @@ def _resolve_robot(msg: str) -> Optional[str]:
             return r
     return None
 
-
 # ── Strategist node ────────────────────────────────────────────────────────
 
 def strategist_node(state: AgentState) -> AgentState:
@@ -181,7 +267,7 @@ def strategist_node(state: AgentState) -> AgentState:
                 break
 
     # LLM fallback: multilingual / unusual greetings not in the set
-    if not _is_greeting:
+    if not _is_greeting and len(_stripped.split()) <= 4:
         _clf_prompt = (
             f'Is this a greeting or salutation in any language? Message: "{last_msg}"\n'
             f'Return ONLY JSON with these exact keys:\n'
@@ -355,22 +441,13 @@ def logistics_node(state: AgentState) -> AgentState:
     task = action.get("action", "General Inspection")
     logs = state.get("reasoning_log", [])
 
-    target_loc = next((loc for loc in ALL_LOCATIONS if loc.lower() in task.lower()), None)
-    move_result = ""
-    if target_loc:
-        move_result = fleet_manager.set_location(robot, target_loc)
-        send_ros_command(robot, target_loc)
+    schedule_completion(robot, task, is_chaos=False, delay=7.0)
+    result = f"Dispatching {robot}: {task}"
 
-    result = fleet_manager.assign_mission(robot, task)
-    if move_result:
-        result = f"{move_result}\n{result}"
-
-    log_type = f"{'Relocate to ' + target_loc + ' + ' if target_loc else ''}Mission: {task[:40]}"
     history_entry = {"timestamp": str(datetime.now()), "robot": robot, "task": task, "result": result}
-
     return {
         "messages": state.get("messages", []) + [AIMessage(content=result)],
-        "reasoning_log": logs + [f"Logistics: {log_type} — {result[:60]}"],
+        "reasoning_log": logs + [f"Logistics: {task[:40]} — {result[:60]}"],
         "mission_history": state.get("mission_history", []) + [history_entry],
         "needs_approval": False,
         "pending_action": {},
@@ -380,12 +457,8 @@ def logistics_node(state: AgentState) -> AgentState:
 
 def handle_chaos_event(event: str, response_loc: str) -> Tuple[str, List[str]]:
     available = fleet_manager.get_available_robots()
-
     if not available:
-        msg = (
-            f"⚠️ **FACTORY ALERT:** {event}\n\n"
-            f"**CRITICAL:** No available units. All robots are offline, on mission, or charging."
-        )
+        msg = (f"⚠️ **FACTORY ALERT:** {event}\n\n**CRITICAL:** No available units.")
         chaos_report_queue.put((event, response_loc, [], []))
         return msg, []
 
@@ -395,24 +468,14 @@ def handle_chaos_event(event: str, response_loc: str) -> Tuple[str, List[str]]:
 
     dispatch_results = []
     for robot in responders:
-        res = fleet_manager.set_location(robot, response_loc)
-        send_ros_command(robot, response_loc)
-        dispatch_results.append((robot, fleet_manager.robots[robot]["type"], res))
-        fleet_manager.assign_mission(robot, f"Emergency response: {event}")
+        task = f"Emergency response: {event} at {response_loc}"   # location name embedded
+        schedule_completion(robot, task, is_chaos=True, delay=7.0)
+        dispatch_results.append((robot, fleet_manager.robots[robot]["type"], f"Dispatched to {response_loc}"))
 
-    responder_lines = "\n".join([
-        f"  - **{name}** ({rtype}): {res}"
-        for name, rtype, res in dispatch_results
-    ])
-
-    brief_report = (
-        f"🚨 **FACTORY ALERT:** {event}\n\n"
-        f"**Units Dispatched:**\n{responder_lines}\n\n"
-        f"**Incident Report:** Emergency protocols engaged."
-    )
+    responder_lines = "\n".join([f"  - **{n}** ({t}): {r}" for n, t, r in dispatch_results])
+    brief_report = (f"🚨 **FACTORY ALERT:** {event}\n\n**Units Dispatched:**\n{responder_lines}")
     chaos_report_queue.put((event, response_loc, responders, dispatch_results))
     return brief_report, responders
-
 
 def drain_chaos_report_queue() -> list:
     items = []
@@ -521,50 +584,56 @@ Rules:
         pass
     return []
 
-
 def schedule_completion(robot: str, task: str, is_chaos: bool = False, delay: float = 7.0):
-    """Starts LLM report immediately in parallel; shows En Route → Executing → Complete."""
+    if robot not in fleet_manager.robots:
+        return
+    if fleet_manager.robots[robot]['health'] != 'Operational':
+        fleet_manager._log_event(f"{robot} dispatch blocked — health: {fleet_manager.robots[robot]['health']}")
+        return
     token = fleet_manager.add_to_mission_board(robot, task, is_chaos)
-
-    # Start LLM report generation NOW, parallel with the delay timer
     report_holder = [None]
 
     def _generate():
         report_holder[0] = generate_completion_report(robot, task, is_chaos)
+    threading.Thread(target=_generate, daemon=True).start()
 
-    gen_thread = threading.Thread(target=_generate, daemon=True)
-    gen_thread.start()
+    fleet_manager.robots[robot]['mission'] = task
+    fleet_manager.robots[robot]['status'] = 'En Route'
+    fleet_manager.mission_board[robot]['enroute'] = True
 
-    # En Route for 6s (visible), then Executing Mission for remainder
-    ENROUTE_DURATION = 6.0
+    target_loc = next((loc for loc in ALL_LOCATIONS if loc.lower() in task.lower()), None)
 
-    if robot in fleet_manager.robots:
-        fleet_manager.robots[robot]['status'] = 'En Route'
-    if robot in fleet_manager.mission_board:
-        fleet_manager.mission_board[robot]['enroute'] = True
+    if target_loc:
+        fleet_manager.robots[robot]['moving'] = True
+        fleet_manager.robots[robot]['_nav_kind'] = 'llm'
+        fleet_manager.robots[robot]['_nav_target'] = target_loc
+        pending_missions[robot] = {"token": token, "report_holder": report_holder, "task": task, "is_chaos": is_chaos}
+        send_ros_command(robot, target_loc)
 
-    def _set_executing():
-        if robot in fleet_manager.robots:
-            if fleet_manager.robots[robot].get('status') == 'En Route':
+        def _fallback():
+            entry_now = pending_missions.get(robot)
+            if entry_now is None or entry_now.get("token") != token:
+                return
+            pending_missions.pop(robot, None)
+            fleet_manager.robots[robot]['moving'] = False
+            fleet_manager._log_event(f"ALERT: {robot} mission timed out waiting for /mission_complete — bridge_node may be unresponsive")
+            report = report_holder[0] or f"{robot} completed: {task}. Mission accomplished."
+            fleet_manager.complete_mission(robot)
+            fleet_manager.complete_mission_board(robot, report, token=token)
+        threading.Timer(90.0, _fallback).start()   # <-- fixed, generous ceiling — not tied to `delay`
+    else:
+        def _set_executing():
+            if fleet_manager.robots.get(robot, {}).get('status') == 'En Route':
                 fleet_manager.robots[robot]['status'] = 'Executing Mission'
-        if robot in fleet_manager.mission_board:
-            fleet_manager.mission_board[robot]['enroute'] = False
+            if robot in fleet_manager.mission_board:
+                fleet_manager.mission_board[robot]['enroute'] = False
+        threading.Timer(6.0, _set_executing).start()
 
-    def _fire():
-        # LLM started at t=0; max wait = delay*2 so total cap ≈ 3*delay
-        gen_thread.join(timeout=delay * 2)
-        report = report_holder[0] or f"{robot} completed: {task}. Mission accomplished."
-        fleet_manager.complete_mission(robot)
-        fleet_manager.complete_mission_board(robot, report, token=token)
-
-    t_exec = threading.Timer(ENROUTE_DURATION, _set_executing)
-    t_exec.daemon = True
-    t_exec.start()
-
-    t = threading.Timer(delay, _fire)
-    t.daemon = True
-    t.start()
-
+        def _fire():
+            report = report_holder[0] or f"{robot} completed: {task}. Mission accomplished."
+            fleet_manager.complete_mission(robot)
+            fleet_manager.complete_mission_board(robot, report, token=token)
+        threading.Timer(delay, _fire).start()
 # ── Router + graph ─────────────────────────────────────────────────────────
 
 def router(state: AgentState) -> str:
